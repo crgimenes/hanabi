@@ -158,18 +158,14 @@ func readInput(args []string) (string, error) {
 }
 
 func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, debug bool) int {
-	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || cols < 1 || rows < 1 {
-		// Terminals that report no size are common enough (some pty wrappers,
-		// CI runners) that refusing to run would cost more than the assumption.
-		cols, rows = 80, 24
-	}
+	cols, rows := terminalSize()
 	w := min(target.W, cols)
 	h := min(target.H, rows)
 	if w < target.W || h < target.H {
 		fmt.Fprintf(os.Stderr, "hanabi: text is %dx%d but the terminal is %dx%d; the rest is cut\n",
 			target.W, target.H, cols, rows)
 	}
+	reserved := h
 
 	// #nosec G404 -- the animation is seeded so a given -seed replays
 	// frame for frame; unpredictability would be a defect here.
@@ -179,9 +175,13 @@ func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, de
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	defer signal.Stop(winch)
+
 	dst := canvas.New(w, h)
 	r := canvas.NewRenderer(os.Stdout, w, h)
-	err = r.Begin()
+	err := r.Begin()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "hanabi:", err)
 		return 1
@@ -199,6 +199,17 @@ func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, de
 	status := 0
 
 	for {
+		select {
+		case <-winch:
+			cols, rows = terminalSize()
+			// The region was scrolled into view once, at Begin. It can shrink
+			// with the terminal, but it must never grow past what was reserved:
+			// the rows below it belong to whatever comes after the animation.
+			dst.Resize(min(target.W, cols), min(target.H, rows, reserved))
+			r.Full()
+		default:
+		}
+
 		elapsed := time.Since(start)
 		frameStart := time.Now()
 		more := ef.Frame(dst, elapsed)
@@ -229,6 +240,16 @@ func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, de
 		reportDebug(os.Stderr, entry.Name, frames, time.Since(start), r.Bytes, samples)
 	}
 	return status
+}
+
+func terminalSize() (cols, rows int) {
+	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || cols < 1 || rows < 1 {
+		// Terminals that report no size are common enough (some pty wrappers,
+		// CI runners) that refusing to run would cost more than the assumption.
+		return 80, 24
+	}
+	return cols, rows
 }
 
 func reportDebug(w io.Writer, name string, frames int, wall time.Duration, bytes int64, samples []time.Duration) {

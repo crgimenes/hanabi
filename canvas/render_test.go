@@ -344,3 +344,50 @@ func verticalTravel(t *testing.T, b []byte) int {
 	}
 	return rows
 }
+
+// A resize is the one case where the diff has nothing to diff against: the
+// previous frame describes a grid that no longer exists. Resetting the front
+// buffer is not enough -- a cell that is blank in both buffers gets skipped
+// while the terminal still shows what the older, larger frame put there. Only
+// a full repaint clears it.
+func TestDrawRepaintsInFullAfterAResize(t *testing.T) {
+	const maxW, maxH = 20, 5
+	var out bytes.Buffer
+	r := NewRenderer(&out, maxW, maxH)
+	// Stands in for the terminal, so it keeps what earlier frames left behind
+	// instead of starting clean at every size.
+	p := newReplay(t, maxW, maxH)
+
+	steps := []struct {
+		w, h int
+		cell Cell
+	}{
+		{maxW, maxH, Cell{R: 'X', FG: RGB(200, 0, 0), BG: Default}},
+		{10, 3, Blank},
+		{14, 5, Cell{R: 'o', FG: Default, BG: RGB(0, 0, 90)}},
+		{1, 1, Blank},
+		{maxW, maxH, Cell{R: '#', FG: Default, BG: Default}},
+	}
+
+	for i, s := range steps {
+		want := New(s.w, s.h)
+		want.Fill(s.cell)
+		out.Reset()
+		err := r.Draw(want)
+		if err != nil {
+			t.Fatalf("step %d (%dx%d): Draw: %v", i, s.w, s.h, err)
+		}
+		p.x, p.y = 0, 0
+		p.run(out.Bytes())
+		for y := range s.h {
+			for x := range s.w {
+				got := p.grid.At(x, y)
+				if got == s.cell {
+					continue
+				}
+				t.Fatalf("step %d (%dx%d): cell (%d,%d) = %+v, want %+v",
+					i, s.w, s.h, x, y, got, s.cell)
+			}
+		}
+	}
+}
