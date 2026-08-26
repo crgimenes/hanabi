@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,9 +22,9 @@ import (
 
 var Version = "dev"
 
-// A run is bounded so a misbehaving effect cannot hold the terminal forever.
-// yagni: fixed ceiling, fine while every effect ends on its own; attract mode
-// will have to lift it.
+// Guards a single effect run, in loop mode too: an effect that never reports
+// itself finished would otherwise hold the terminal with no way out but a
+// signal. The loop itself is unbounded on purpose, and ends on the interrupt.
 const maxRun = 5 * time.Minute
 
 const maxSamples = 4096
@@ -33,11 +34,13 @@ func main() {
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `usage: hanabi [flags] <effect> [file]
+	_, _ = fmt.Fprint(w, `usage: hanabi [flags] <effect[,effect...]> [file]
 
 Animate text in the terminal. Reads the file, or standard input when no file
 is given or the file is "-". The finished text is left on screen.
 
+  -loop          replay until interrupted, cycling through the named effects
+  -dwell dur     how long the finished text is held in -loop (default 3s)
   -list          list the available effects and exit
   -json          machine-readable output for -list
   -fps int       frames per second (default 60)
@@ -51,6 +54,8 @@ When standard output is not a terminal the text is printed unchanged, so the
 command is safe in a pipe.
 
   figlet hanabi | hanabi decrypt
+  hanabi -loop -dwell 10s decrypt,wipe logo.txt
+  hanabi -loop "$(hanabi -list | cut -d';' -f1 | paste -sd, -)" logo.txt
 `)
 }
 
@@ -62,6 +67,8 @@ func run() int {
 	fps := fs.Int("fps", 60, "")
 	seed := fs.Uint64("seed", 1, "")
 	debug := fs.Bool("debug", false, "")
+	loop := fs.Bool("loop", false, "")
+	dwell := fs.Duration("dwell", 3*time.Second, "")
 	showVersion := fs.Bool("version", false, "")
 
 	err := fs.Parse(os.Args[1:])
@@ -94,9 +101,14 @@ func run() int {
 		return 2
 	}
 
-	entry, ok := effect.Get(args[0])
-	if !ok {
-		fmt.Fprintf(os.Stderr, "hanabi: unknown effect %q\nrun 'hanabi -list' to see the available effects\n", args[0])
+	entries, err := parseEffects(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "hanabi:", err)
+		fmt.Fprintln(os.Stderr, "run 'hanabi -list' to see the available effects")
+		return 2
+	}
+	if *dwell < 0 {
+		fmt.Fprintln(os.Stderr, "hanabi: -dwell cannot be negative")
 		return 2
 	}
 
@@ -118,7 +130,13 @@ func run() int {
 		return 0
 	}
 
-	return animate(entry, target, *fps, *seed, *debug)
+	return animate(entries, target, opts{
+		fps:   *fps,
+		seed:  *seed,
+		debug: *debug,
+		loop:  *loop,
+		dwell: *dwell,
+	})
 }
 
 func printList(asJSON bool) {
@@ -157,7 +175,42 @@ func readInput(args []string) (string, error) {
 	return string(b), nil
 }
 
-func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, debug bool) int {
+type opts struct {
+	fps   int
+	seed  uint64
+	debug bool
+	loop  bool
+	dwell time.Duration
+}
+
+// play carries the state one effect run needs and the counters that outlive it.
+type play struct {
+	r        *canvas.Renderer
+	dst      *canvas.Canvas
+	target   *canvas.Canvas
+	ticker   *time.Ticker
+	winch    <-chan os.Signal
+	reserved int
+
+	frames  int
+	samples []time.Duration
+}
+
+func parseEffects(arg string) ([]effect.Entry, error) {
+	names := strings.Split(arg, ",")
+	entries := make([]effect.Entry, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		e, ok := effect.Get(name)
+		if !ok {
+			return nil, fmt.Errorf("unknown effect %q", name)
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 	cols, rows := terminalSize()
 	w := min(target.W, cols)
 	h := min(target.H, rows)
@@ -165,12 +218,6 @@ func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, de
 		fmt.Fprintf(os.Stderr, "hanabi: text is %dx%d but the terminal is %dx%d; the rest is cut\n",
 			target.W, target.H, cols, rows)
 	}
-	reserved := h
-
-	// #nosec G404 -- the animation is seeded so a given -seed replays
-	// frame for frame; unpredictability would be a defect here.
-	rnd := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
-	ef := entry.New(target, rnd)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -179,7 +226,6 @@ func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, de
 	signal.Notify(winch, syscall.SIGWINCH)
 	defer signal.Stop(winch)
 
-	dst := canvas.New(w, h)
 	r := canvas.NewRenderer(os.Stdout, w, h)
 	err := r.Begin()
 	if err != nil {
@@ -190,56 +236,112 @@ func animate(entry effect.Entry, target *canvas.Canvas, fps int, seed uint64, de
 		_ = r.End()
 	}()
 
-	ticker := time.NewTicker(time.Second / time.Duration(fps))
+	ticker := time.NewTicker(time.Second / time.Duration(o.fps))
 	defer ticker.Stop()
 
-	samples := make([]time.Duration, 0, 256)
+	p := &play{
+		r:        r,
+		dst:      canvas.New(w, h),
+		target:   target,
+		ticker:   ticker,
+		winch:    winch,
+		reserved: h,
+		samples:  make([]time.Duration, 0, 256),
+	}
+
 	start := time.Now()
-	frames := 0
 	status := 0
+	seed := o.seed
+	idx := 0
 
 	for {
-		select {
-		case <-winch:
-			cols, rows = terminalSize()
-			// The region was scrolled into view once, at Begin. It can shrink
-			// with the terminal, but it must never grow past what was reserved:
-			// the rows below it belong to whatever comes after the animation.
-			dst.Resize(min(target.W, cols), min(target.H, rows, reserved))
-			r.Full()
-		default:
+		// #nosec G404 -- the animation is seeded so a given -seed replays frame
+		// for frame; unpredictability would be a defect here. The seed advances
+		// per run so a loop does not repeat itself, and still replays as a whole.
+		rnd := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+		err = p.once(ctx, entries[idx].New(target, rnd))
+		if err != nil {
+			status = exitFor(err)
+			break
 		}
+		if !o.loop {
+			break
+		}
+		err = pause(ctx, o.dwell)
+		if err != nil {
+			status = exitFor(err)
+			break
+		}
+		seed++
+		idx = (idx + 1) % len(entries)
+	}
+
+	if o.debug {
+		reportDebug(os.Stderr, entries, p.frames, time.Since(start), r.Bytes, p.samples)
+	}
+	return status
+}
+
+func exitFor(err error) int {
+	if errors.Is(err, context.Canceled) {
+		return 130
+	}
+	fmt.Fprintln(os.Stderr, "hanabi:", err)
+	return 1
+}
+
+// once plays a single effect to completion, or until the context is cancelled.
+func (p *play) once(ctx context.Context, ef effect.Effect) error {
+	start := time.Now()
+	for {
+		p.refit()
 
 		elapsed := time.Since(start)
 		frameStart := time.Now()
-		more := ef.Frame(dst, elapsed)
-		err = r.Draw(dst)
-		if len(samples) < maxSamples {
-			samples = append(samples, time.Since(frameStart))
+		more := ef.Frame(p.dst, elapsed)
+		err := p.r.Draw(p.dst)
+		p.frames++
+		if len(p.samples) < maxSamples {
+			p.samples = append(p.samples, time.Since(frameStart))
 		}
-		frames++
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "hanabi:", err)
-			status = 1
-			break
+			return err
 		}
 		if !more || elapsed > maxRun {
-			break
+			return nil
 		}
 
 		select {
 		case <-ctx.Done():
-			status = 130
-		case <-ticker.C:
-			continue
+			return ctx.Err()
+		case <-p.ticker.C:
 		}
-		break
 	}
+}
 
-	if debug {
-		reportDebug(os.Stderr, entry.Name, frames, time.Since(start), r.Bytes, samples)
+// refit reacts to a terminal resize. The region was scrolled into view once, at
+// Begin: it can shrink with the terminal, but it must never grow past what was
+// reserved, because the rows below it belong to whatever comes after.
+func (p *play) refit() {
+	select {
+	case <-p.winch:
+	default:
+		return
 	}
-	return status
+	cols, rows := terminalSize()
+	p.dst.Resize(min(p.target.W, cols), min(p.target.H, rows, p.reserved))
+	p.r.Full()
+}
+
+func pause(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func terminalSize() (cols, rows int) {
@@ -252,7 +354,7 @@ func terminalSize() (cols, rows int) {
 	return cols, rows
 }
 
-func reportDebug(w io.Writer, name string, frames int, wall time.Duration, bytes int64, samples []time.Duration) {
+func reportDebug(w io.Writer, entries []effect.Entry, frames int, wall time.Duration, bytes int64, samples []time.Duration) {
 	slices.Sort(samples)
 	perFrame := int64(0)
 	if frames > 0 {
@@ -260,7 +362,7 @@ func reportDebug(w io.Writer, name string, frames int, wall time.Duration, bytes
 	}
 	_, _ = fmt.Fprintf(w,
 		"effect=%s frames=%d wall=%dms bytes=%d bytes_per_frame=%d build_p50=%s build_p95=%s build_max=%s\n",
-		name, frames, wall.Milliseconds(), bytes, perFrame,
+		effectNames(entries), frames, wall.Milliseconds(), bytes, perFrame,
 		percentile(samples, 50), percentile(samples, 95), percentile(samples, 100))
 }
 
@@ -270,4 +372,12 @@ func percentile(sorted []time.Duration, p int) time.Duration {
 	}
 	i := (len(sorted) - 1) * p / 100
 	return sorted[i]
+}
+
+func effectNames(entries []effect.Entry) string {
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name)
+	}
+	return strings.Join(names, ",")
 }

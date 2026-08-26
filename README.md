@@ -38,6 +38,18 @@ $ cat logo.txt | hanabi decrypt
 $ hanabi -seed 42 -fps 30 decrypt logo.txt
 ```
 
+`-loop` replays until interrupted, cycling through the effects you name, with
+`-dwell` holding the finished text in between. This is the idle screen the
+project was written for -- something to leave running on a shared terminal.
+
+```console
+$ hanabi -loop -dwell 10s decrypt,wipe logo.txt
+$ hanabi -loop "$(hanabi -list | cut -d';' -f1 | paste -sd, -)" logo.txt
+```
+
+The seed advances on every pass, so a loop does not repeat itself; a given
+`-seed` still replays the whole sequence frame for frame.
+
 The animation runs in a region reserved at the cursor and leaves the finished
 text on screen, so it works inside a prompt or a script without taking over the
 terminal. When standard output is not a terminal the text is printed unchanged,
