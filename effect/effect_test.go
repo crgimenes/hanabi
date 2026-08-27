@@ -888,3 +888,143 @@ func TestColourOnlyEffectsWindDownBeforeTheyStop(t *testing.T) {
 		})
 	}
 }
+
+func frameAt(t *testing.T, name string, target *canvas.Canvas, seed uint64, at time.Duration) *canvas.Canvas {
+	t.Helper()
+	entry, ok := Get(name)
+	if !ok {
+		t.Fatalf("%s is not registered", name)
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)))
+	dst := canvas.New(target.W, target.H)
+	dst.CopyFrom(target)
+	ef.Frame(dst, at)
+	return dst
+}
+
+func wrongCells(dst, target *canvas.Canvas) int {
+	n := 0
+	for i := range dst.Cells {
+		if dst.Cells[i].R != target.Cells[i].R {
+			n++
+		}
+	}
+	return n
+}
+
+// errorcorrect is the only effect that shows the text complete but wrong. What
+// makes it read as a mistake rather than as damage is that every misplaced
+// character is one that genuinely belongs somewhere else in the text.
+func TestErrorcorrectSwapsRealCharactersAndWorksThroughThem(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghij\n", 8), canvas.Default)
+	present := map[rune]bool{}
+	for _, cell := range target.Cells {
+		present[cell.R] = true
+	}
+
+	first := frameAt(t, "errorcorrect", target, 3, 0)
+	wrong := wrongCells(first, target)
+	if wrong == 0 {
+		t.Fatal("nothing was out of place at the start")
+	}
+	for i := range first.Cells {
+		if first.Cells[i] == canvas.Blank && target.Cells[i] != canvas.Blank {
+			t.Fatalf("cell %d was hidden; this effect hides nothing", i)
+		}
+		if !present[first.Cells[i].R] {
+			t.Fatalf("cell %d holds %q, which is nowhere in the text; it was invented, not swapped",
+				i, first.Cells[i].R)
+		}
+	}
+
+	late := wrongCells(frameAt(t, "errorcorrect", target, 3, errorcorrectRun*4/5), target)
+	if late >= wrong {
+		t.Fatalf("%d cells wrong late against %d at the start; the corrections never land", late, wrong)
+	}
+}
+
+// Rows above the cut arrive from one side and rows below from the other. A slice
+// that moved both the same way would be slide with extra steps.
+func TestSliceBringsTheHalvesInFromOppositeSides(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnop\n", 8), canvas.Default)
+	cut := target.H / 2
+
+	moved := 0
+	for _, at := range []time.Duration{sliceRun / 5, sliceRun / 3, sliceRun / 2} {
+		dst := frameAt(t, "slice", target, 3, at)
+		for y := range target.H {
+			shift := shiftOfRow(dst, target, y)
+			if shift == 0 {
+				continue
+			}
+			moved++
+			if y < cut && shift > 0 {
+				t.Fatalf("t=%s: row %d is above the cut but came from the right", at, y)
+			}
+			if y >= cut && shift < 0 {
+				t.Fatalf("t=%s: row %d is below the cut but came from the left", at, y)
+			}
+		}
+	}
+	if moved == 0 {
+		t.Fatal("no row was ever displaced")
+	}
+}
+
+// shiftOfRow finds the displacement that turns the text's row into the drawn
+// one, and fails if no displacement does -- a shift that smears would land here.
+func shiftOfRow(dst, target *canvas.Canvas, y int) int {
+	for shift := -target.W; shift <= target.W; shift++ {
+		if sameRow(dst, target, y, shift) {
+			return shift
+		}
+	}
+	return 0
+}
+
+// The middle row opens first and the rest follows, so the drawn text is wider
+// than it is tall early on and squares up later.
+func TestMiddleoutOpensAcrossBeforeItOpensOut(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnopqrst\n", 12), canvas.Default)
+
+	_, _, _, earlyTop, earlyBottom := inked(frameAt(t, "middleout", target, 3, middleoutRun/3))
+	_, _, _, lateTop, lateBottom := inked(frameAt(t, "middleout", target, 3, middleoutRun*9/10))
+	if earlyBottom < earlyTop {
+		t.Fatal("nothing was drawn a third of the way in")
+	}
+	early, late := earlyBottom-earlyTop+1, lateBottom-lateTop+1
+	if early >= late {
+		t.Fatalf("%d rows showing early against %d late; it never unfolds", early, late)
+	}
+	// The order is the whole idea: nothing above or below the middle until the
+	// middle row itself has opened. Two rows, because an even height has no
+	// single middle one.
+	if early > 2 {
+		t.Fatalf("%d rows showing before the middle row has opened; both axes are opening at once", early)
+	}
+}
+
+// The plainest reveal there is: a cell is either not there yet or right. Showing
+// anything else would make it decrypt.
+func TestRandomsequenceOnlyEverShowsBlankOrTheRightCharacter(t *testing.T) {
+	target := canvas.FromText(sample, canvas.Default)
+	counts := []int{}
+	for _, at := range []time.Duration{0, randomsequenceRun / 3, randomsequenceRun * 2 / 3} {
+		dst := frameAt(t, "randomsequence", target, 3, at)
+		shown := 0
+		for i := range dst.Cells {
+			if dst.Cells[i] == target.Cells[i] {
+				shown++
+				continue
+			}
+			if dst.Cells[i] == canvas.Blank {
+				continue
+			}
+			t.Fatalf("t=%s: cell %d holds %+v, which is neither blank nor the text", at, i, dst.Cells[i])
+		}
+		counts = append(counts, shown)
+	}
+	if counts[0] >= counts[2] {
+		t.Fatalf("%d cells showing at the start against %d later; nothing appears", counts[0], counts[2])
+	}
+}

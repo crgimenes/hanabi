@@ -112,12 +112,16 @@ standard error.
 | `burn` | A band of fire sweeps up through the text, recolouring as it goes |
 | `colorshift` | A moving spectrum runs through the text |
 | `decrypt` | Random glyphs settle one by one into the text |
+| `errorcorrect` | Characters sit in each other places until each pair is put right |
 | `expand` | The picture grows out of a point in the middle |
 | `glitch` | Rows tear sideways and lose their colour, then settle |
 | `highlight` | A specular band shines across, changing no colour |
 | `laseretch` | A white-hot point walks the text, trailing heat |
 | `matrix` | Columns of glyphs rain down, revealing the text behind them |
+| `middleout` | The middle row opens, then the rest unfolds above and below |
+| `randomsequence` | Characters appear in no particular order |
 | `scattered` | Characters are thrown apart and find their way back |
+| `slice` | The text is cut in half and the halves come in from opposite sides |
 | `slide` | The whole picture slides in from the left |
 | `smoke` | Drifting smoke greys whatever it crosses |
 | `spotlight` | A beam sweeps over the text, lighting only what it falls on |
@@ -134,11 +138,14 @@ change which character is in it, so any of them goes over any of the others.
 `highlight` changes no colour at all, only weight, which leaves ANSI art's own
 palette intact.
 
-**Hide and substitute** -- `decrypt`, `matrix`, `spotlight`, `typing`, `wipe`.
+**Hide and substitute** -- `decrypt`, `matrix`, `middleout`, `randomsequence`,
+`spotlight`, `typing`, `wipe`. `errorcorrect` belongs here only loosely: it hides
+nothing at all, showing the text complete but with pairs of characters in each
+other's places until it works through them.
 
-**Move cells** -- `slide` carries the whole picture, `glitch` whole rows,
-`scattered` every character on its own, `expand` changes the size. Two movers in
-one chain fight over the same cells. That
+**Move cells** -- `slide` carries the whole picture, `slice` its two halves in
+opposite directions, `glitch` whole rows, `scattered` every character on its own,
+and `expand` changes the size. Two movers in one chain fight over the same cells. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
 
