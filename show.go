@@ -225,6 +225,10 @@ func playShot(s *session, st showStep, seed uint64) (status int, quit bool) {
 	cols, rows := terminalSize()
 	w := min(st.target.W, cols)
 	h := min(st.target.H, rows)
+	if w < st.target.W || h < st.target.H {
+		fmt.Fprintf(os.Stderr, "hanabi: a shot is %dx%d but the terminal is %dx%d; the rest is cut\n",
+			st.target.W, st.target.H, cols, rows)
+	}
 
 	r := canvas.NewRenderer(os.Stdout, w, h)
 	err := r.Begin()

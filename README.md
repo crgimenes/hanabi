@@ -203,7 +203,9 @@ same script always produces the same show.
 resolved against the script's own directory; `(pause seconds)` holds; `(wait-key)`
 waits for the reader, any key advancing; `(clear)` wipes the screen, which
 otherwise scrolls on down the terminal. Loops belong to the language: repeating
-is `(map ... (range n))`. See [examples/demo.filo](examples/demo.filo).
+is `(map ... (range n))`. The [examples](examples/) directory holds three shows
+and a handful of small art files to run them on; `hanabi examples/hanabi.filo`
+is the tour.
 
 ## Dependencies
 

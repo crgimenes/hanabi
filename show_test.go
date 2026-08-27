@@ -230,3 +230,66 @@ func TestHoldForWaitsAndReactsToQuit(t *testing.T) {
 		t.Fatalf("q during a pause gave %v, want errQuit", err)
 	}
 }
+
+// The examples ship in the repository, so unlike the art corpus they are always
+// present: every one of them has to parse, and its (file ...) references have
+// to resolve. This is what keeps the examples from rotting as builtins change.
+func TestEveryExampleShowParses(t *testing.T) {
+	entries, err := os.ReadDir("examples")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shows := 0
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".filo") {
+			continue
+		}
+		shows++
+		t.Run(e.Name(), func(t *testing.T) {
+			b, err := os.ReadFile(filepath.Join("examples", e.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			steps, err := parseShow(string(b), "examples")
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasShot := false
+			for _, st := range steps {
+				if st.kind == stepShot {
+					hasShot = true
+				}
+			}
+			if !hasShot {
+				t.Fatal("the example records no shot")
+			}
+		})
+	}
+	if shows == 0 {
+		t.Fatal("no example shows found")
+	}
+}
+
+// A function body holds several expressions and all of them run: the moods
+// example leans on (fn (face) (shot ...) (pause ...)) recording two steps per
+// face, and a language change that dropped that would thin the show silently.
+func TestFnBodyRecordsEveryExpression(t *testing.T) {
+	steps, err := parseShow(`
+		(map (fn (x) (shot "wipe" "tick") (pause 0.1)) (range 2))
+	`, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	shots, pauses := 0, 0
+	for _, st := range steps {
+		switch st.kind {
+		case stepShot:
+			shots++
+		case stepPause:
+			pauses++
+		}
+	}
+	if shots != 2 || pauses != 2 {
+		t.Fatalf("recorded %d shots and %d pauses, want 2 and 2", shots, pauses)
+	}
+}
