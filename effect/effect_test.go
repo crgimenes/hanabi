@@ -641,3 +641,90 @@ func TestGlitchWashesTheColourOfATornRow(t *testing.T) {
 		t.Fatal("no torn cell had its colour washed out")
 	}
 }
+
+// inked reports the bounding box of everything drawn, and how much of it there
+// is, which is how the two movers are measured without knowing where any
+// particular character went.
+func inked(c *canvas.Canvas) (count, minX, maxX, minY, maxY int) {
+	minX, minY = c.W, c.H
+	maxX, maxY = -1, -1
+	for y := range c.H {
+		for x := range c.W {
+			if c.At(x, y).R == ' ' {
+				continue
+			}
+			count++
+			minX, maxX = min(minX, x), max(maxX, x)
+			minY, maxY = min(minY, y), max(maxY, y)
+		}
+	}
+	return count, minX, maxX, minY, maxY
+}
+
+// Thrown apart and back again. Both ends are invisible to the end-state test,
+// which only sees the frame after the effect has given up.
+func TestScatteredThrowsCharactersOutAndBringsThemHome(t *testing.T) {
+	target := canvas.FromText(sample, canvas.Default)
+	entry, ok := Get("scattered")
+	if !ok {
+		t.Fatal("scattered is not registered")
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(5, 6)))
+	dst := canvas.New(target.W, target.H)
+	home, _, _, _, _ := inked(target)
+
+	// Early: most characters are still out beyond the edges, so far fewer of
+	// them are on screen than the text has.
+	dst.CopyFrom(target)
+	ef.Frame(dst, scatteredRun/10)
+	early, _, _, _, _ := inked(dst)
+	if early >= home {
+		t.Fatalf("%d characters on screen against %d in the text; nothing was thrown", early, home)
+	}
+
+	// Late: everything has landed, in its own place.
+	dst.CopyFrom(target)
+	ef.Frame(dst, scatteredRun+scatteredStagger-time.Millisecond)
+	for y := range target.H {
+		for x := range target.W {
+			got, want := dst.At(x, y), target.At(x, y)
+			if got == want {
+				continue
+			}
+			t.Fatalf("just before settling, cell (%d,%d) = %+v, want %+v", x, y, got, want)
+		}
+	}
+}
+
+// The picture has to be smaller than itself while it grows, and whole by the
+// end. A scale stuck at one would pass every other test here.
+func TestExpandGrowsFromTheMiddle(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnopqrst\n", 12), canvas.Default)
+	entry, ok := Get("expand")
+	if !ok {
+		t.Fatal("expand is not registered")
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(5, 6)))
+	dst := canvas.New(target.W, target.H)
+
+	_, wantMinX, wantMaxX, wantMinY, wantMaxY := inked(target)
+	wantW, wantH := wantMaxX-wantMinX+1, wantMaxY-wantMinY+1
+
+	dst.CopyFrom(target)
+	ef.Frame(dst, expandRun/4)
+	count, minX, maxX, minY, maxY := inked(dst)
+	if count == 0 {
+		t.Fatal("nothing was drawn a quarter of the way in")
+	}
+	w, h := maxX-minX+1, maxY-minY+1
+	if w >= wantW || h >= wantH {
+		t.Fatalf("a quarter of the way in the picture is %dx%d against %dx%d; it is not growing", w, h, wantW, wantH)
+	}
+
+	dst.CopyFrom(target)
+	ef.Frame(dst, expandRun-time.Millisecond)
+	_, minX, maxX, minY, maxY = inked(dst)
+	if maxX-minX+1 != wantW || maxY-minY+1 != wantH {
+		t.Fatalf("at the end the picture is %dx%d, want %dx%d", maxX-minX+1, maxY-minY+1, wantW, wantH)
+	}
+}

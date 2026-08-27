@@ -110,15 +110,18 @@ standard error.
 |---|---|
 | `burn` | A band of fire sweeps up through the text, recolouring as it goes |
 | `decrypt` | Random glyphs settle one by one into the text |
+| `expand` | The picture grows out of a point in the middle |
 | `glitch` | Rows tear sideways and lose their colour, then settle |
 | `matrix` | Columns of glyphs rain down, revealing the text behind them |
+| `scattered` | Characters are thrown apart and find their way back |
 | `slide` | The whole picture slides in from the left |
 | `spotlight` | A beam sweeps over the text, lighting only what it falls on |
 | `typing` | Somebody types the text, uneven, pausing, backspacing over mistakes |
 | `wipe` | A diagonal sweep reveals the text from the top-left |
 
-`burn` only recolours, `slide` and `glitch` only move, and the rest hide and
-substitute. That
+`burn` only recolours; `slide`, `glitch`, `scattered` and `expand` move cells,
+each in its own way -- the whole picture, whole rows, every character on its own,
+and a change of size; the rest hide and substitute. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
 

@@ -40,8 +40,10 @@ type Entry struct {
 var all = []Entry{
 	{"burn", "A band of fire sweeps up through the text, recolouring as it goes", newBurn},
 	{"decrypt", "Random glyphs settle one by one into the text", newDecrypt},
+	{"expand", "The picture grows out of a point in the middle", newExpand},
 	{"glitch", "Rows tear sideways and lose their colour, then settle", newGlitch},
 	{"matrix", "Columns of glyphs rain down, revealing the text behind them", newMatrix},
+	{"scattered", "Characters are thrown apart and find their way back", newScattered},
 	{"slide", "The whole picture slides in from the left", newSlide},
 	{"spotlight", "A beam sweeps over the text, lighting only what it falls on", newSpotlight},
 	{"typing", "Somebody types the text, uneven, pausing, backspacing over mistakes", newTyping},
