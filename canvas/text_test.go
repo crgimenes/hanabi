@@ -275,3 +275,106 @@ func TestFromTextHonoursCursorForward(t *testing.T) {
 		}
 	}
 }
+
+// A wide character is drawn over two columns whatever we think, so the grid has
+// to agree with the terminal or every cell after it on the row lands one place
+// out. The second column is held by a continuation, which nothing draws.
+func TestFromTextGivesWideRunesTwoColumns(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		width int
+		runes []rune
+	}{
+		{name: "ascii", text: "abc\n", width: 3, runes: []rune{'a', 'b', 'c'}},
+		{name: "emoji", text: "a\U0001F525b\n", width: 4, runes: []rune{'a', '\U0001F525', continuation, 'b'}},
+		{name: "cjk", text: "日本\n", width: 4, runes: []rune{'日', continuation, '本', continuation}},
+		// A combining mark has no column, so it takes none.
+		{name: "combining", text: "éf\n", width: 2, runes: []rune{'e', 'f'}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := FromText(tt.text, Default)
+			if c.W != tt.width {
+				t.Fatalf("width %d, want %d", c.W, tt.width)
+			}
+			for x, want := range tt.runes {
+				if got := c.At(x, 0).R; got != want {
+					t.Fatalf("cell %d holds %q, want %q", x, got, want)
+				}
+			}
+		})
+	}
+}
+
+// Half a glyph cannot be drawn. An effect that overwrites one column of a wide
+// character has to lose the whole thing, not leave the row a place out.
+func TestRenderDropsHalfOfAWideCharacter(t *testing.T) {
+	for _, broken := range []string{"left", "right"} {
+		t.Run(broken, func(t *testing.T) {
+			c := FromText("日本x\n", Default)
+			if broken == "left" {
+				c.Set(0, 0, Cell{R: 'z', FG: Default, BG: Default})
+			} else {
+				c.Set(1, 0, Cell{R: 'z', FG: Default, BG: Default})
+			}
+
+			var out strings.Builder
+			r := NewRenderer(&out, c.W, c.H)
+			err := r.Draw(c)
+			if err != nil {
+				t.Fatalf("Draw: %v", err)
+			}
+
+			p := newReplay(t, c.W, c.H)
+			p.run([]byte(out.String()))
+			if diff := firstDiff(c, p.grid); diff != "" {
+				t.Fatal(diff)
+			}
+			// Whichever half survived, the pair is gone and the rest of the row
+			// is where it was.
+			if got := p.grid.At(4, 0).R; got != 'x' {
+				t.Fatalf("the row shifted: column 4 holds %q, want 'x'", got)
+			}
+		})
+	}
+}
+
+func TestWideRunesSurviveTheRoundTrip(t *testing.T) {
+	c := FromText("日本語\nabc\U0001F525\n", RGB(200, 30, 30))
+	var out strings.Builder
+	r := NewRenderer(&out, c.W, c.H)
+	err := r.Draw(c)
+	if err != nil {
+		t.Fatalf("Draw: %v", err)
+	}
+	p := newReplay(t, c.W, c.H)
+	p.run([]byte(out.String()))
+	if diff := firstDiff(c, p.grid); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
+// The cursor is tracked in columns, not in cells, so a run of wide characters
+// costs one move for the run rather than one per character. Getting this wrong
+// does not corrupt anything -- the renderer re-addresses the column and the
+// output stays right -- it just spends bytes, which is the whole budget here.
+func TestWideRunesDoNotCostAMovePerCharacter(t *testing.T) {
+	wide := FromText(strings.Repeat("日", 20)+"\n", Default)
+	narrow := FromText(strings.Repeat("ab", 20)+"\n", Default)
+
+	cost := func(c *Canvas) int {
+		var out strings.Builder
+		r := NewRenderer(&out, c.W, c.H)
+		err := r.Draw(c)
+		if err != nil {
+			t.Fatalf("Draw: %v", err)
+		}
+		return strings.Count(out.String(), "\r")
+	}
+
+	if got, want := cost(wide), cost(narrow); got > want {
+		t.Fatalf("a row of wide characters took %d cursor moves against %d for the same width in narrow ones",
+			got, want)
+	}
+}

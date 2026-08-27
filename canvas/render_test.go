@@ -162,15 +162,27 @@ func (p *replay) byteAt(s string) uint8 {
 }
 
 func (p *replay) put(r rune) {
+	if r == continuation {
+		// The renderer must never send this: it is our own marker for the
+		// column a wide glyph reaches into, and on a real terminal it would go
+		// out as a NUL byte.
+		p.t.Fatalf("replay: the continuation marker was written at (%d,%d)", p.x, p.y)
+	}
 	if p.x < 0 || p.y < 0 || p.x >= p.grid.W || p.y >= p.grid.H {
 		p.t.Fatalf("replay: wrote %q outside the region at (%d,%d)", r, p.x, p.y)
 	}
-	p.grid.Cells[p.y*p.grid.W+p.x] = Cell{R: r, Bold: p.bold, FG: p.fg, BG: p.bg}
+	cell := Cell{R: r, Bold: p.bold, FG: p.fg, BG: p.bg}
+	p.grid.Cells[p.y*p.grid.W+p.x] = cell
+	width := runeWidth(r)
+	// A wide glyph covers the next column too, and the terminal moves the
+	// cursor past both.
+	if width == 2 && p.x+1 < p.grid.W {
+		cell.R = continuation
+		p.grid.Cells[p.y*p.grid.W+p.x+1] = cell
+	}
 	// Autowrap is off for the whole run, so the cursor stalls in the last
 	// column instead of moving to the next row.
-	if p.x < p.grid.W-1 {
-		p.x++
-	}
+	p.x = min(p.x+width, p.grid.W-1)
 }
 
 func isFinal(b byte) bool {

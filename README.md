@@ -74,10 +74,13 @@ Cursor-forward (`ESC[17C`), which old art uses to skip blanks instead of writing
 spaces, is honoured. Any other escape sequence is dropped: drawing it would put
 cells on screen that show nothing and shift the rest of the line.
 
-**Every character is assumed one column wide.** A double-width rune -- CJK, or
-most emoji -- is drawn in one cell while the terminal gives it two, and the rest
-of that line lands one column to the left for each one. Text that is ASCII, box
-drawing or block art is unaffected, which is what ANSI art is made of.
+**Wide characters take two columns**, as the terminal draws them: CJK, fullwidth
+forms and most emoji hold a cell and the one beside it. Combining marks, which
+have no column of their own, are dropped -- our cells hold one rune each, and a
+line missing an accent still puts every character where it belongs.
+
+An effect that overwrites one half of a wide character loses the whole thing
+rather than leaving half a glyph and a row shifted a place along.
 
 **Input must be UTF-8.** That is a decision, not an omission -- guessing an
 encoding only moves the mojibake somewhere harder to see. BBS-era `.ans` art is

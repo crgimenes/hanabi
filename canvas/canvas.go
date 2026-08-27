@@ -170,9 +170,20 @@ func FromText(s string, fg Color) *Canvas {
 			i++
 		default:
 			r, n := utf8.DecodeRuneInString(s[i:])
+			i += n
+			width := runeWidth(r)
+			if width == 0 {
+				// A combining mark has no column of its own. Our cells hold one
+				// rune each, so it is dropped: "e" without its accent still puts
+				// the rest of the line where it belongs, which a shifted row
+				// does not.
+				continue
+			}
 			last := len(rows) - 1
 			rows[last] = append(rows[last], Cell{R: r, Bold: pen.Bold, FG: pen.FG, BG: pen.BG})
-			i += n
+			if width == 2 {
+				rows[last] = append(rows[last], Cell{R: continuation, FG: pen.FG, BG: pen.BG})
+			}
 		}
 	}
 

@@ -88,6 +88,8 @@ func (r *Renderer) Draw(back *Canvas) error {
 		r.full = true
 	}
 
+	mendWide(back)
+
 	r.buf = r.buf[:0]
 	r.buf = append(r.buf, sgrReset...)
 	body := len(r.buf)
@@ -98,13 +100,17 @@ func (r *Renderer) Draw(back *Canvas) error {
 		row := y * back.W
 		for x := range back.W {
 			cell := back.Cells[row+x]
+			if cell.R == continuation {
+				// Written already, by the wide character to its left.
+				continue
+			}
 			if !r.full && cell == r.front.Cells[row+x] {
 				continue
 			}
 			r.moveTo(x, y)
 			r.pen(cell.FG, cell.BG, cell.Bold)
 			r.buf = utf8.AppendRune(r.buf, cell.R)
-			r.x++
+			r.x = x + runeWidth(cell.R)
 		}
 	}
 
@@ -120,6 +126,38 @@ func (r *Renderer) Draw(back *Canvas) error {
 	copy(r.front.Cells, back.Cells)
 	r.full = false
 	return r.flush()
+}
+
+// mendWide drops whichever half of a wide character an effect has left behind
+// after overwriting the other. A terminal cannot draw half a glyph, and a wide
+// character with nothing under its second column would put the rest of the row
+// one place out.
+func mendWide(c *Canvas) {
+	for y := range c.H {
+		row := y * c.W
+		for x := range c.W {
+			cell := c.Cells[row+x]
+			switch {
+			case cell.R == continuation:
+				if x > 0 && runeWidth(c.Cells[row+x-1].R) == 2 {
+					continue
+				}
+			case runeWidth(cell.R) == 2:
+				if x+1 < c.W && c.Cells[row+x+1].R == continuation {
+					// One glyph, so one set of attributes: an effect that
+					// recoloured only the left half would otherwise leave the
+					// two disagreeing about a colour the terminal draws once.
+					c.Cells[row+x+1].Bold = cell.Bold
+					c.Cells[row+x+1].FG = cell.FG
+					c.Cells[row+x+1].BG = cell.BG
+					continue
+				}
+			default:
+				continue
+			}
+			c.Cells[row+x] = Blank
+		}
+	}
 }
 
 func (r *Renderer) flush() error {
