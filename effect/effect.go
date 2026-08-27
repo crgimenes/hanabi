@@ -39,8 +39,10 @@ type Entry struct {
 
 var all = []Entry{
 	{"beams", "Bright lines sweep across at their own angles", newBeams},
+	{"binarypath", "Characters travel in along their row as binary digits", newBinarypath},
 	{"burn", "A band of fire sweeps up through the text, recolouring as it goes", newBurn},
 	{"colorshift", "A moving spectrum runs through the text", newColorshift},
+	{"crumble", "The text drains, breaks into grit, is swept away and returns", newCrumble},
 	{"decrypt", "Random glyphs settle one by one into the text", newDecrypt},
 	{"errorcorrect", "Characters sit in each other places until each pair is put right", newErrorcorrect},
 	{"expand", "The picture grows out of a point in the middle", newExpand},
@@ -49,6 +51,7 @@ var all = []Entry{
 	{"laseretch", "A white-hot point walks the text, trailing heat", newLaseretch},
 	{"matrix", "Columns of glyphs rain down, revealing the text behind them", newMatrix},
 	{"middleout", "The middle row opens, then the rest unfolds above and below", newMiddleout},
+	{"overflow", "Rows scroll past out of order and settle into place", newOverflow},
 	{"randomsequence", "Characters appear in no particular order", newRandomsequence},
 	{"scattered", "Characters are thrown apart and find their way back", newScattered},
 	{"slice", "The text is cut in half and the halves come in from opposite sides", newSlice},
@@ -56,7 +59,9 @@ var all = []Entry{
 	{"smoke", "Drifting smoke greys whatever it crosses", newSmoke},
 	{"spotlight", "A beam sweeps over the text, lighting only what it falls on", newSpotlight},
 	{"sweep", "A front lays colour down, then a second takes it away", newSweep},
+	{"synthgrid", "A grid is ruled over the space and the text dissolves into it", newSynthgrid},
 	{"typing", "Somebody types the text, uneven, pausing, backspacing over mistakes", newTyping},
+	{"unstable", "Jumbled characters blow apart and settle where they belong", newUnstable},
 	{"waves", "Bands of colour roll through the text", newWaves},
 	{"wipe", "A diagonal sweep reveals the text from the top-left", newWipe},
 }

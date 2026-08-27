@@ -109,8 +109,10 @@ standard error.
 | Name | Description |
 |---|---|
 | `beams` | Bright lines sweep across at their own angles |
+| `binarypath` | Characters travel in along their row as binary digits |
 | `burn` | A band of fire sweeps up through the text, recolouring as it goes |
 | `colorshift` | A moving spectrum runs through the text |
+| `crumble` | The text drains, breaks into grit, is swept away and returns |
 | `decrypt` | Random glyphs settle one by one into the text |
 | `errorcorrect` | Characters sit in each other places until each pair is put right |
 | `expand` | The picture grows out of a point in the middle |
@@ -119,6 +121,7 @@ standard error.
 | `laseretch` | A white-hot point walks the text, trailing heat |
 | `matrix` | Columns of glyphs rain down, revealing the text behind them |
 | `middleout` | The middle row opens, then the rest unfolds above and below |
+| `overflow` | Rows scroll past out of order and settle into place |
 | `randomsequence` | Characters appear in no particular order |
 | `scattered` | Characters are thrown apart and find their way back |
 | `slice` | The text is cut in half and the halves come in from opposite sides |
@@ -126,7 +129,9 @@ standard error.
 | `smoke` | Drifting smoke greys whatever it crosses |
 | `spotlight` | A beam sweeps over the text, lighting only what it falls on |
 | `sweep` | A front lays colour down, then a second takes it away |
+| `synthgrid` | A grid is ruled over the space and the text dissolves into it |
 | `typing` | Somebody types the text, uneven, pausing, backspacing over mistakes |
+| `unstable` | Jumbled characters blow apart and settle where they belong |
 | `waves` | Bands of colour roll through the text |
 | `wipe` | A diagonal sweep reveals the text from the top-left |
 
@@ -138,14 +143,15 @@ change which character is in it, so any of them goes over any of the others.
 `highlight` changes no colour at all, only weight, which leaves ANSI art's own
 palette intact.
 
-**Hide and substitute** -- `decrypt`, `matrix`, `middleout`, `randomsequence`,
-`spotlight`, `typing`, `wipe`. `errorcorrect` belongs here only loosely: it hides
-nothing at all, showing the text complete but with pairs of characters in each
-other's places until it works through them.
+**Hide and substitute** -- `crumble`, `decrypt`, `matrix`, `middleout`,
+`randomsequence`, `spotlight`, `synthgrid`, `typing`, `wipe`. `errorcorrect`
+belongs here only loosely: it hides nothing at all, showing the text complete but
+with pairs of characters in each other's places until it works through them.
 
 **Move cells** -- `slide` carries the whole picture, `slice` its two halves in
-opposite directions, `glitch` whole rows, `scattered` every character on its own,
-and `expand` changes the size. Two movers in one chain fight over the same cells. That
+opposite directions, `glitch` and `overflow` whole rows, `binarypath`,
+`scattered` and `unstable` every character on its own, and `expand` changes the
+size. Two movers in one chain fight over the same cells. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
 

@@ -2,6 +2,7 @@ package effect
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -1026,5 +1027,161 @@ func TestRandomsequenceOnlyEverShowsBlankOrTheRightCharacter(t *testing.T) {
 	}
 	if counts[0] >= counts[2] {
 		t.Fatalf("%d cells showing at the start against %d later; nothing appears", counts[0], counts[2])
+	}
+}
+
+func firstDiff(want, got *canvas.Canvas) string {
+	for y := range want.H {
+		for x := range want.W {
+			a, b := want.At(x, y), got.At(x, y)
+			if a == b {
+				continue
+			}
+			return fmt.Sprintf("cell (%d,%d) = %+v, want %+v", x, y, b, a)
+		}
+	}
+	return ""
+}
+
+// crumble is the only effect that takes the text away and brings it back, so
+// what has to be true is that it really does go: a version that only greyed the
+// characters would pass every other test here.
+func TestCrumbleSweepsTheTextAwayBeforeReturningIt(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghij\n", 8), canvas.Default)
+	inkedTotal, _, _, _, _ := inked(target)
+
+	gone := 0
+	for _, at := range []time.Duration{crumbleRun / 2, crumbleRun * 3 / 5} {
+		count, _, _, _, _ := inked(frameAt(t, "crumble", target, 3, at))
+		gone = max(gone, inkedTotal-count)
+	}
+	if gone*3 < inkedTotal {
+		t.Fatalf("at most %d of %d cells were ever swept away; the text never leaves", gone, inkedTotal)
+	}
+
+	// And it comes back, which the end-state test cannot see: crumble's last
+	// frame returns without touching the canvas.
+	last := frameAt(t, "crumble", target, 3, crumbleRun-time.Millisecond)
+	if diff := firstDiff(target, last); diff != "" {
+		t.Fatalf("just before finishing: %s", diff)
+	}
+}
+
+// The grid is what makes this one different from every other reveal, so it has
+// to actually be drawn, and drawn before the text fills it in.
+func TestSynthgridRulesTheGridBeforeFillingIt(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnopqrst\n", 12), canvas.Default)
+	// Well inside the ruling phase: not one cell may hold the text yet.
+	dst := frameAt(t, "synthgrid", target, 3, time.Duration(float64(synthgridRun)*synthgridDraw/2))
+
+	lines, text := 0, 0
+	for i := range dst.Cells {
+		switch dst.Cells[i].R {
+		case synthgridCross, synthgridRow, synthgridCol:
+			lines++
+		case target.Cells[i].R:
+			if target.Cells[i].R != ' ' {
+				text++
+			}
+		}
+	}
+	if lines == 0 {
+		t.Fatal("no grid was ruled")
+	}
+	if text > 0 {
+		t.Fatalf("%d cells already hold the text while the grid is still being ruled", text)
+	}
+}
+
+// A row showing a different row is the whole effect. Displacing rows sideways
+// would be glitch.
+func TestOverflowPutsWholeRowsInTheWrongPlace(t *testing.T) {
+	target := canvas.FromText("aaaa\nbbbb\ncccc\ndddd\neeee\nffff\n", canvas.Default)
+	borrowed := 0
+	for _, at := range []time.Duration{overflowRun / 5, overflowRun / 3, overflowRun / 2} {
+		dst := frameAt(t, "overflow", target, 3, at)
+		for y := range target.H {
+			if sameRow(dst, target, y, 0) {
+				continue
+			}
+			from := -1
+			for other := range target.H {
+				if rowRunes(dst, y) == rowRunes(target, other) {
+					from = other
+				}
+			}
+			if from < 0 {
+				t.Fatalf("t=%s: row %d holds %q, which is no row of the text", at, y, rowRunes(dst, y))
+			}
+			borrowed++
+		}
+	}
+	if borrowed == 0 {
+		t.Fatal("no row was ever taken from somewhere else")
+	}
+}
+
+// The digits travel: they are never to the right of where their character
+// belongs, and they give way to the character on arrival.
+func TestBinarypathWalksDigitsInAlongTheRow(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnop\n", 6), canvas.Default)
+	digits, arrived := 0, 0
+	for _, at := range []time.Duration{binarypathRun / 4, binarypathRun / 2} {
+		dst := frameAt(t, "binarypath", target, 3, at)
+		lastDigit, lastHome := -1, -1
+		for y := range target.H {
+			for x := range target.W {
+				got := dst.At(x, y)
+				if target.At(x, y).R != ' ' {
+					lastHome = max(lastHome, x)
+				}
+				if got.R == '0' || got.R == '1' {
+					digits++
+					lastDigit = max(lastDigit, x)
+					continue
+				}
+				if got.R == target.At(x, y).R && got.R != ' ' {
+					arrived++
+				}
+			}
+		}
+		// Travelling means being short of home: a digit standing on the last
+		// column of the text has not moved, it was drawn where it belongs.
+		if lastDigit >= lastHome {
+			t.Fatalf("t=%s: a digit sits at column %d, as far right as the text reaches; nothing travelled",
+				at, lastDigit)
+		}
+	}
+	if digits == 0 {
+		t.Fatal("no digit was ever on its way")
+	}
+	if arrived == 0 {
+		t.Fatal("no character ever arrived")
+	}
+}
+
+// Three acts, and the middle one is what names the effect: the characters have
+// to leave the area the text occupies.
+func TestUnstableJumblesThenBlowsApart(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghij\n", 8), canvas.Default)
+
+	held := frameAt(t, "unstable", target, 3, time.Duration(float64(unstableRun)*unstableHold/2))
+	if wrongCells(held, target) == 0 {
+		t.Fatal("the text was already right in the first act; nothing was jumbled")
+	}
+
+	// The canvas is exactly the size of the text, so characters blown past its
+	// edge are dropped rather than drawn somewhere further out: the sign of the
+	// blast is how many have left, not a wider bounding box.
+	home, _, _, _, _ := inked(target)
+	blast := frameAt(t, "unstable", target, 3, time.Duration(float64(unstableRun)*(unstableHold+unstableBlast)/2))
+	blown, _, _, _, _ := inked(blast)
+	if blown*2 > home {
+		t.Fatalf("%d of %d characters are still on screen mid-blast; they never left", blown, home)
+	}
+
+	settled := frameAt(t, "unstable", target, 3, unstableRun-time.Millisecond)
+	if diff := firstDiff(target, settled); diff != "" {
+		t.Fatalf("just before finishing: %s", diff)
 	}
 }

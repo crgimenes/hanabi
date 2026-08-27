@@ -35,7 +35,7 @@ func (g *glitch) Frame(c *canvas.Canvas, t time.Duration) bool {
 	if t >= glitchRun {
 		return false
 	}
-	slice := sliceAt(t)
+	slice := sliceAt(t, glitchSlice)
 	chance := glitchPeak * (1 - float64(t)/float64(glitchRun))
 
 	var row uint64
@@ -50,9 +50,15 @@ func (g *glitch) Frame(c *canvas.Canvas, t time.Duration) bool {
 	return true
 }
 
+// sliceAt numbers the time slices an effect flickers on, so a hash of the slice
+// gives a value that holds still for a while instead of changing every frame.
+//
 // #nosec G115 -- elapsed time is never negative, so the conversion cannot wrap.
-func sliceAt(t time.Duration) uint64 {
-	return uint64(t / glitchSlice)
+func sliceAt(t, every time.Duration) uint64 {
+	if every <= 0 {
+		return 0
+	}
+	return uint64(t / every)
 }
 
 // #nosec G115 -- the remainder is below 2*glitchShift+1, far inside an int.
