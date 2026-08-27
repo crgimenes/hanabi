@@ -446,3 +446,198 @@ func TestTypingBackspacesOverItsMistakes(t *testing.T) {
 		t.Fatal("no mistake was erased before the right character went in")
 	}
 }
+
+func spotlightAt(t *testing.T, target *canvas.Canvas, phase float64) *spotlight {
+	t.Helper()
+	entry, ok := Get("spotlight")
+	if !ok {
+		t.Fatal("spotlight is not registered")
+	}
+	s, ok := entry.New(target, rand.New(rand.NewPCG(1, 2))).(*spotlight)
+	if !ok {
+		t.Fatalf("spotlight is a %T", s)
+	}
+	s.phase = phase
+	return s
+}
+
+func blanksIn(dst, target *canvas.Canvas) (blank, lit int) {
+	for i := range dst.Cells {
+		if target.Cells[i].R == ' ' {
+			continue
+		}
+		if dst.Cells[i] == canvas.Blank {
+			blank++
+			continue
+		}
+		lit++
+	}
+	return blank, lit
+}
+
+// The beam has to leave part of the text in the dark while it sweeps, and none
+// of it by the time it has opened out. Both halves are invisible to the
+// end-state test, which only ever sees the frame after the effect gives up.
+func TestSpotlightLightsPartOfTheTextThenOpensOut(t *testing.T) {
+	target := canvas.FromText(sample, canvas.Default)
+	s := spotlightAt(t, target, 0.13)
+	dst := canvas.New(target.W, target.H)
+
+	dst.CopyFrom(target)
+	s.Frame(dst, spotlightRun/4)
+	blank, lit := blanksIn(dst, target)
+	if blank == 0 {
+		t.Fatal("mid-sweep the whole text was lit; the beam masks nothing")
+	}
+	if lit == 0 {
+		t.Fatal("mid-sweep nothing was lit; the beam covers nothing")
+	}
+
+	dst.CopyFrom(target)
+	s.Frame(dst, spotlightRun-time.Millisecond)
+	blank, _ = blanksIn(dst, target)
+	if blank != 0 {
+		t.Fatalf("%d cells were still dark when the beam should have opened out", blank)
+	}
+}
+
+// Terminal cells are taller than they are wide, so a beam computed without that
+// correction lights an area twice as tall as it should be. Phase zero puts the
+// beam in the middle of the canvas at t=0, which is what makes it measurable.
+func TestSpotlightBeamIsRoundOnScreenNotInCells(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("#", 60)+"\n", canvas.Default)
+	for range 30 {
+		target = canvas.FromText(strings.Repeat("#", 60)+"\n"+rowsOf(target), canvas.Default)
+	}
+	s := spotlightAt(t, target, 0)
+	dst := canvas.New(target.W, target.H)
+	dst.CopyFrom(target)
+	s.Frame(dst, 0)
+
+	minX, maxX, minY, maxY := target.W, -1, target.H, -1
+	for y := range target.H {
+		for x := range target.W {
+			if dst.At(x, y) == canvas.Blank {
+				continue
+			}
+			minX, maxX = min(minX, x), max(maxX, x)
+			minY, maxY = min(minY, y), max(maxY, y)
+		}
+	}
+	w, h := maxX-minX+1, maxY-minY+1
+	if h < 1 || w < 1 {
+		t.Fatal("nothing was lit")
+	}
+	// Twice as wide as tall, give or take the rounding of whole cells.
+	ratio := float64(w) / float64(h)
+	if ratio < 1.5 || ratio > 2.6 {
+		t.Fatalf("lit area is %dx%d cells, ratio %.2f; want about 2 (cells are twice as tall as wide)", w, h, ratio)
+	}
+}
+
+func rowsOf(c *canvas.Canvas) string {
+	var b strings.Builder
+	for y := range c.H {
+		for x := range c.W {
+			b.WriteRune(c.At(x, y).R)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// tornRows reports how many rows are displaced at a moment, and fails if any
+// displaced row is not simply a shifted copy of itself -- an in-place shift that
+// walks the wrong way smears one cell across the whole row instead.
+func tornRows(t *testing.T, dst, target *canvas.Canvas) int {
+	t.Helper()
+	torn := 0
+	for y := range target.H {
+		if sameRow(dst, target, y, 0) {
+			continue
+		}
+		torn++
+		found := false
+		for shift := -glitchShift; shift <= glitchShift && !found; shift++ {
+			found = shift != 0 && sameRow(dst, target, y, shift)
+		}
+		if !found {
+			t.Fatalf("row %d is not the row shifted by anything in range: %q", y, rowRunes(dst, y))
+		}
+	}
+	return torn
+}
+
+// sameRow compares a drawn row against the text shifted sideways, ignoring the
+// colour wash and treating cells pulled in from off the row as blank.
+func sameRow(dst, target *canvas.Canvas, y, shift int) bool {
+	for x := range target.W {
+		want := target.At(x-shift, y)
+		got := dst.At(x, y)
+		if got.R != want.R {
+			return false
+		}
+	}
+	return true
+}
+
+func rowRunes(c *canvas.Canvas, y int) string {
+	var b strings.Builder
+	for x := range c.W {
+		b.WriteRune(c.At(x, y).R)
+	}
+	return b.String()
+}
+
+// The tearing has to happen, has to be a shift rather than a smear, and has to
+// die down: a glitch that never settles would never hand the text back.
+func TestGlitchTearsRowsAndSettles(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnopqrst\n", 12), canvas.Default)
+	entry, ok := Get("glitch")
+	if !ok {
+		t.Fatal("glitch is not registered")
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(4, 9)))
+	dst := canvas.New(target.W, target.H)
+
+	early, late := 0, 0
+	for at := time.Duration(0); at < glitchRun/4; at += glitchSlice {
+		dst.CopyFrom(target)
+		ef.Frame(dst, at)
+		early += tornRows(t, dst, target)
+	}
+	for at := glitchRun * 3 / 4; at < glitchRun; at += glitchSlice {
+		dst.CopyFrom(target)
+		ef.Frame(dst, at)
+		late += tornRows(t, dst, target)
+	}
+
+	if early == 0 {
+		t.Fatal("no row was ever torn")
+	}
+	if late >= early {
+		t.Fatalf("%d rows torn late against %d early; the glitch never settles", late, early)
+	}
+}
+
+// The wash is what sells it as signal loss rather than as the text moving.
+func TestGlitchWashesTheColourOfATornRow(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnopqrst\n", 12), canvas.RGB(20, 200, 40))
+	entry, _ := Get("glitch")
+	ef := entry.New(target, rand.New(rand.NewPCG(4, 9)))
+	dst := canvas.New(target.W, target.H)
+
+	washed := 0
+	for at := time.Duration(0); at < glitchRun/3; at += glitchSlice {
+		dst.CopyFrom(target)
+		ef.Frame(dst, at)
+		for i := range dst.Cells {
+			if dst.Cells[i].R != ' ' && dst.Cells[i].FG == glitchWash {
+				washed++
+			}
+		}
+	}
+	if washed == 0 {
+		t.Fatal("no torn cell had its colour washed out")
+	}
+}

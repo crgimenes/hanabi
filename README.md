@@ -74,6 +74,11 @@ Cursor-forward (`ESC[17C`), which old art uses to skip blanks instead of writing
 spaces, is honoured. Any other escape sequence is dropped: drawing it would put
 cells on screen that show nothing and shift the rest of the line.
 
+**Every character is assumed one column wide.** A double-width rune -- CJK, or
+most emoji -- is drawn in one cell while the terminal gives it two, and the rest
+of that line lands one column to the left for each one. Text that is ASCII, box
+drawing or block art is unaffected, which is what ANSI art is made of.
+
 **Input must be UTF-8.** That is a decision, not an omission -- guessing an
 encoding only moves the mojibake somewhere harder to see. BBS-era `.ans` art is
 usually CP437, and hanabi refuses it with the command that converts it:
@@ -105,12 +110,15 @@ standard error.
 |---|---|
 | `burn` | A band of fire sweeps up through the text, recolouring as it goes |
 | `decrypt` | Random glyphs settle one by one into the text |
+| `glitch` | Rows tear sideways and lose their colour, then settle |
 | `matrix` | Columns of glyphs rain down, revealing the text behind them |
 | `slide` | The whole picture slides in from the left |
+| `spotlight` | A beam sweeps over the text, lighting only what it falls on |
 | `typing` | Somebody types the text, uneven, pausing, backspacing over mistakes |
 | `wipe` | A diagonal sweep reveals the text from the top-left |
 
-`burn` only recolours and `slide` only moves; the rest hide and substitute. That
+`burn` only recolours, `slide` and `glitch` only move, and the rest hide and
+substitute. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
 
