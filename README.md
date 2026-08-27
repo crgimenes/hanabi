@@ -113,26 +113,37 @@ standard error.
 |---|---|
 | `beams` | Bright lines sweep across at their own angles |
 | `binarypath` | Characters travel in along their row as binary digits |
+| `blackhole` | The text is pulled into a point and let back out with a twist |
+| `bouncyballs` | Characters drop in and bounce before they settle |
+| `bubbles` | Characters float up from below, swaying as they rise |
 | `burn` | A band of fire sweeps up through the text, recolouring as it goes |
 | `colorshift` | A moving spectrum runs through the text |
 | `crumble` | The text drains, breaks into grit, is swept away and returns |
 | `decrypt` | Random glyphs settle one by one into the text |
 | `errorcorrect` | Characters sit in each other places until each pair is put right |
 | `expand` | The picture grows out of a point in the middle |
+| `fireworks` | Shells climb, burst, and scatter the characters into place |
 | `glitch` | Rows tear sideways and lose their colour, then settle |
 | `highlight` | A specular band shines across, changing no colour |
 | `laseretch` | A white-hot point walks the text, trailing heat |
 | `matrix` | Columns of glyphs rain down, revealing the text behind them |
 | `middleout` | The middle row opens, then the rest unfolds above and below |
+| `orbittingvolley` | Four orbiting launchers fire the characters inward |
 | `overflow` | Rows scroll past out of order and settle into place |
+| `rain` | Characters fall straight down into place, gathering speed |
+| `pour` | The text fills from the bottom up, streaming in from the left |
 | `randomsequence` | Characters appear in no particular order |
+| `rings` | Characters gather onto turning circles that draw in |
 | `scattered` | Characters are thrown apart and find their way back |
 | `slice` | The text is cut in half and the halves come in from opposite sides |
 | `slide` | The whole picture slides in from the left |
 | `smoke` | Drifting smoke greys whatever it crosses |
 | `spotlight` | A beam sweeps over the text, lighting only what it falls on |
+| `spray` | Characters are sprayed out from one point, each on its own line |
+| `swarm` | Flocks of characters wander together before settling |
 | `sweep` | A front lays colour down, then a second takes it away |
 | `synthgrid` | A grid is ruled over the space and the text dissolves into it |
+| `thunderstorm` | Characters fall on a wind that gusts and slackens |
 | `typing` | Somebody types the text, uneven, pausing, backspacing over mistakes |
 | `unstable` | Jumbled characters blow apart and settle where they belong |
 | `waves` | Bands of colour roll through the text |
@@ -152,9 +163,12 @@ belongs here only loosely: it hides nothing at all, showing the text complete bu
 with pairs of characters in each other's places until it works through them.
 
 **Move cells** -- `slide` carries the whole picture, `slice` its two halves in
-opposite directions, `glitch` and `overflow` whole rows, `binarypath`,
-`scattered` and `unstable` every character on its own, and `expand` changes the
-size. Two movers in one chain fight over the same cells. That
+opposite directions, `glitch` and `overflow` whole rows, and `expand` changes the
+size. `binarypath`, `blackhole`, `bouncyballs`, `bubbles`, `fireworks`,
+`orbittingvolley`, `pour`, `rain`, `rings`, `scattered`, `spray`, `swarm`,
+`thunderstorm` and `unstable` carry every character on its own path. Two movers in one chain fight
+over the same cells, and a wide character is dropped for the length of a flight
+rather than carried in halves. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
 
@@ -168,10 +182,35 @@ it suits a line or a short paragraph. A thousand characters take over two
 minutes, and a run that reaches the five-minute ceiling stops the way `q` does,
 with the whole text on screen.
 
+## Shows
+
+An argument ending in `.filo` is a show script: a small
+[Filo](https://github.com/crgimenes/filo) program that records a sequence of
+steps, which then play in order. The script never runs the animation itself --
+it builds the playlist under tight limits and finishes in milliseconds, so the
+same script always produces the same show.
+
+```lisp
+(shot "slide,decrypt" "hanabi\na show, scripted in filo")
+(pause 1)
+(map (fn (i) (shot "wipe" "tick")) (range 2))
+(wait-key)
+(clear)
+(shot "fireworks,burn" (file "finale.txt"))
+```
+
+`(shot "effects" text)` plays a chain over a text; `(file "path")` reads a file,
+resolved against the script's own directory; `(pause seconds)` holds; `(wait-key)`
+waits for the reader, any key advancing; `(clear)` wipes the screen, which
+otherwise scrolls on down the terminal. Loops belong to the language: repeating
+is `(map ... (range n))`. See [examples/demo.filo](examples/demo.filo).
+
 ## Dependencies
 
-`golang.org/x/term`, for the terminal size and the is-a-terminal check. That is
-the whole list.
+`golang.org/x/term` for the terminal, and
+[`github.com/crgimenes/filo`](https://github.com/crgimenes/filo) for show
+scripts -- itself pure Go with the same single dependency. That is the whole
+list.
 
 ## License
 

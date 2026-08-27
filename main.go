@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -40,10 +41,17 @@ func main() {
 
 func usage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `usage: hanabi [flags] <effect[,effect...]> [file]
+       hanabi [flags] <show.filo>
 
 Animate text in the terminal. Reads the file, or standard input when no file
 is given or the file is "-". The finished text is left on screen. Naming more
 than one effect layers them: they run together, on the same frames.
+
+An argument ending in .filo is a show script: a Filo program that records a
+sequence of steps, played in order. Its builtins are (shot "effects" text),
+(file "path"), (pause seconds), (wait-key) and (clear); paths resolve against
+the script's own directory. During (wait-key) any key advances; q still quits
+and Ctrl-C still aborts.
 
 Press q to jump to the finished text and exit; Ctrl-C aborts where it is.
 
@@ -64,6 +72,7 @@ command is safe in a pipe.
   figlet hanabi | hanabi decrypt
   hanabi -loop wipe,decrypt logo.txt
   hanabi -loop "$(hanabi -list | cut -d';' -f1 | paste -sd, -)" logo.txt
+  hanabi demo.filo
 `)
 }
 
@@ -102,6 +111,14 @@ func run() int {
 		return 2
 	}
 
+	if strings.HasSuffix(args[0], ".filo") {
+		if len(args) > 1 {
+			fmt.Fprintln(os.Stderr, "hanabi: a show script takes no further arguments")
+			return 2
+		}
+		return runShowFile(args[0], o)
+	}
+
 	entries, err := parseEffects(args[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "hanabi:", err)
@@ -136,6 +153,30 @@ func run() int {
 	}
 
 	return animate(entries, target, *o)
+}
+
+// runShowFile reads and evaluates the script, then either plays it or, off a
+// terminal, passes its texts through the way plain input does.
+func runShowFile(path string, o *opts) int {
+	b, err := os.ReadFile(path) // #nosec G304 -- the path is the user's own argument.
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "hanabi:", err)
+		return 1
+	}
+	if !utf8.Valid(b) {
+		fmt.Fprintf(os.Stderr, "hanabi: %s is not valid UTF-8\n", path)
+		return 1
+	}
+	steps, err := parseShow(string(b), filepath.Dir(path))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hanabi: %s: %v\n", path, err)
+		return 1
+	}
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Print(showText(steps))
+		return 0
+	}
+	return runShow(steps, *o)
 }
 
 // bindFlags keeps the flag surface in one place so a test can walk it and check
@@ -241,6 +282,8 @@ type key int
 const (
 	keyQuit key = iota
 	keyInterrupt
+	// Any other key. Animations ignore it; (wait-key) in a show consumes it.
+	keyAdvance
 )
 
 // watchKeys puts the controlling terminal in raw mode and reports the keys the
@@ -265,7 +308,7 @@ func watchKeys() (keys <-chan key, stop func()) {
 	}
 }
 
-func readKeys(tty *os.File, keys chan<- key) {
+func readKeys(tty *os.File, keys chan key) {
 	buf := make([]byte, 16)
 	for {
 		n, err := tty.Read(buf)
@@ -277,8 +320,21 @@ func readKeys(tty *os.File, keys chan<- key) {
 			if !ok {
 				continue
 			}
-			// Dropping a keystroke while one is already queued is fine: both
-			// mean stop, and the queued one is about to be acted on.
+			select {
+			case keys <- k:
+				continue
+			default:
+			}
+			// The channel holds one key. An ordinary key can be dropped on the
+			// floor, but q and Ctrl-C must displace whatever is sitting there:
+			// mashing keys and then pressing q has to quit.
+			if k == keyAdvance {
+				continue
+			}
+			select {
+			case <-keys:
+			default:
+			}
 			select {
 			case keys <- k:
 			default:
@@ -296,14 +352,19 @@ func keyFor(b byte) (key, bool) {
 		// be recognised here or it would do nothing at all.
 		return keyInterrupt, true
 	}
-	return 0, false
+	return keyAdvance, true
 }
 
-func errFor(k key) error {
-	if k == keyInterrupt {
+// stopErr says what a key means to whatever is in progress: nil is "not for
+// you, carry on".
+func stopErr(k key) error {
+	switch k {
+	case keyQuit:
+		return errQuit
+	case keyInterrupt:
 		return context.Canceled
 	}
-	return errQuit
+	return nil
 }
 
 // play carries the state one effect run needs and the counters that outlive it.
@@ -336,15 +397,16 @@ func parseEffects(arg string) ([]effect.Entry, error) {
 	return entries, nil
 }
 
-func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
-	cols, rows := terminalSize()
-	w := min(target.W, cols)
-	h := min(target.H, rows)
-	if w < target.W || h < target.H {
-		fmt.Fprintf(os.Stderr, "hanabi: text is %dx%d but the terminal is %dx%d; the rest is cut\n",
-			target.W, target.H, cols, rows)
-	}
+// session is the terminal wiring shared by however much runs in one process:
+// one signal context, one resize channel, one key reader, one frame ticker.
+type session struct {
+	ctx    context.Context
+	keys   <-chan key
+	winch  <-chan os.Signal
+	ticker *time.Ticker
+}
 
+func withSession(fps int, fn func(s *session) int) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -355,38 +417,52 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 	keys, stopKeys := watchKeys()
 	defer stopKeys()
 
-	r := canvas.NewRenderer(os.Stdout, w, h)
-	err := r.Begin()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "hanabi:", err)
-		return 1
-	}
-	defer func() {
-		_ = r.End()
-	}()
-
-	ticker := time.NewTicker(time.Second / time.Duration(o.fps))
+	ticker := time.NewTicker(time.Second / time.Duration(fps))
 	defer ticker.Stop()
 
-	p := &play{
-		r:        r,
-		dst:      canvas.New(w, h),
-		target:   target,
-		ticker:   ticker,
-		winch:    winch,
-		keys:     keys,
-		reserved: h,
-		maxRun:   maxRun,
-		samples:  make([]time.Duration, 0, 256),
+	return fn(&session{ctx: ctx, keys: keys, winch: winch, ticker: ticker})
+}
+
+func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
+	cols, rows := terminalSize()
+	w := min(target.W, cols)
+	h := min(target.H, rows)
+	if w < target.W || h < target.H {
+		fmt.Fprintf(os.Stderr, "hanabi: text is %dx%d but the terminal is %dx%d; the rest is cut\n",
+			target.W, target.H, cols, rows)
 	}
 
-	start := time.Now()
-	status := p.show(ctx, entries, o)
+	return withSession(o.fps, func(s *session) int {
+		r := canvas.NewRenderer(os.Stdout, w, h)
+		err := r.Begin()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "hanabi:", err)
+			return 1
+		}
+		defer func() {
+			_ = r.End()
+		}()
 
-	if o.debug {
-		reportDebug(os.Stderr, entries, p.frames, time.Since(start), r.Bytes, p.samples)
-	}
-	return status
+		p := &play{
+			r:        r,
+			dst:      canvas.New(w, h),
+			target:   target,
+			ticker:   s.ticker,
+			winch:    s.winch,
+			keys:     s.keys,
+			reserved: h,
+			maxRun:   maxRun,
+			samples:  make([]time.Duration, 0, 256),
+		}
+
+		start := time.Now()
+		status := p.show(s.ctx, entries, o)
+
+		if o.debug {
+			reportDebug(os.Stderr, entries, p.frames, time.Since(start), r.Bytes, p.samples)
+		}
+		return status
+	})
 }
 
 // show plays the pass loop and reports the exit status. It is separate from
@@ -453,7 +529,10 @@ func (p *play) once(ctx context.Context, ef effect.Effect) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case k := <-p.keys:
-			return errFor(k)
+			err = stopErr(k)
+			if err != nil {
+				return err
+			}
 		case <-p.ticker.C:
 		}
 	}
@@ -483,13 +562,18 @@ func (p *play) refit() {
 func (p *play) pause(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case k := <-p.keys:
-		return errFor(k)
-	case <-timer.C:
-		return nil
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case k := <-p.keys:
+			err := stopErr(k)
+			if err != nil {
+				return err
+			}
+		case <-timer.C:
+			return nil
+		}
 	}
 }
 

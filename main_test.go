@@ -180,8 +180,8 @@ func TestKeyFor(t *testing.T) {
 		{in: 'q', want: keyQuit, ok: true},
 		{in: 'Q', want: keyQuit, ok: true},
 		{in: 0x03, want: keyInterrupt, ok: true},
-		{in: 'a', ok: false},
-		{in: 0x1b, ok: false},
+		{in: 'a', want: keyAdvance, ok: true},
+		{in: 0x1b, want: keyAdvance, ok: true},
 	}
 	for _, tt := range tests {
 		got, ok := keyFor(tt.in)
@@ -193,12 +193,15 @@ func TestKeyFor(t *testing.T) {
 
 // q leaves the finished text and reports success; Ctrl-C is an abort and must
 // not be mistaken for one.
-func TestErrForSeparatesQuittingFromInterrupting(t *testing.T) {
-	if got := exitFor(errFor(keyInterrupt)); got != 130 {
+func TestStopErrSeparatesQuittingFromInterrupting(t *testing.T) {
+	if got := exitFor(stopErr(keyInterrupt)); got != 130 {
 		t.Errorf("interrupt exits %d, want 130", got)
 	}
-	if !strings.Contains(errFor(keyQuit).Error(), "quit") {
+	if !strings.Contains(stopErr(keyQuit).Error(), "quit") {
 		t.Errorf("quit does not report itself as a quit")
+	}
+	if stopErr(keyAdvance) != nil {
+		t.Errorf("an ordinary key stops the animation; it must be ignored")
 	}
 	if got := exitFor(context.Canceled); got != 130 {
 		t.Errorf("cancellation exits %d, want 130", got)
@@ -483,7 +486,7 @@ func TestPauseWaitsAndStaysInterruptible(t *testing.T) {
 	}
 }
 
-func TestReadKeysTranslatesBytesAndDropsTheRest(t *testing.T) {
+func TestReadKeysDeliversOrdinaryKeysAndNeverLosesQuit(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -493,19 +496,34 @@ func TestReadKeysTranslatesBytesAndDropsTheRest(t *testing.T) {
 	keys := make(chan key, 1)
 	go readKeys(r, keys)
 
+	// Ordinary keys arrive as keyAdvance and q arrives as keyQuit, whatever
+	// sits in front of it: the consumer ignoring advances is what makes mashing
+	// keys and then pressing q still quit.
 	_, err = w.Write([]byte("abcq"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case got := <-keys:
-		if got != keyQuit {
-			t.Fatalf("got %v, want keyQuit", got)
+	sawAdvance := false
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case got := <-keys:
+			if got == keyAdvance {
+				sawAdvance = true
+				continue
+			}
+			if got != keyQuit {
+				t.Fatalf("got %v, want keyQuit", got)
+			}
+			if !sawAdvance {
+				t.Fatal("q arrived but no ordinary key ever did")
+			}
+			_ = w.Close()
+			return
+		case <-deadline:
+			t.Fatal("q never arrived")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no key arrived")
 	}
-	_ = w.Close()
 }
 
 // Exit status is part of the contract: 0 is success and everything else is a
@@ -525,6 +543,8 @@ func TestRunExitCodes(t *testing.T) {
 		{name: "fps out of range", args: []string{"-fps", "0", "wipe"}, want: 2},
 		{name: "negative dwell", args: []string{"-dwell", "-1s", "wipe"}, want: 2},
 		{name: "missing file", args: []string{"wipe", "/nonexistent/art.ans"}, want: 1},
+		{name: "missing show", args: []string{"/nonexistent/show.filo"}, want: 1},
+		{name: "show with extra args", args: []string{"show.filo", "extra"}, want: 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -3,6 +3,7 @@ package effect
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -1183,5 +1184,277 @@ func TestUnstableJumblesThenBlowsApart(t *testing.T) {
 	settled := frameAt(t, "unstable", target, 3, unstableRun-time.Millisecond)
 	if diff := firstDiff(target, settled); diff != "" {
 		t.Fatalf("just before finishing: %s", diff)
+	}
+}
+
+// flights are the effects built on the shared path machinery. They promise the
+// same two things whatever their path: characters leave their places, and every
+// one of them is home by the end.
+var flights = []string{
+	"blackhole", "bouncyballs", "bubbles", "fireworks", "orbittingvolley",
+	"pour", "rain", "rings", "spray", "swarm", "thunderstorm",
+}
+
+func TestFlightsCarryCharactersAwayAndConverge(t *testing.T) {
+	target := canvas.FromText(sample, canvas.Default)
+	inkedTotal, _, _, _, _ := inked(target)
+
+	for _, name := range flights {
+		t.Run(name, func(t *testing.T) {
+			entry, ok := Get(name)
+			if !ok {
+				t.Fatalf("%s is not registered", name)
+			}
+			ef := entry.New(target, rand.New(rand.NewPCG(4, 5)))
+			dst := canvas.New(target.W, target.H)
+
+			away, last := 0, time.Duration(0)
+			for at := time.Duration(0); at < 8*time.Second; at += 20 * time.Millisecond {
+				dst.CopyFrom(target)
+				if !ef.Frame(dst, at) {
+					break
+				}
+				last = at
+				away = max(away, wrongCells(dst, target))
+			}
+			if away == 0 {
+				t.Fatal("no character ever left its place")
+			}
+			if last == 0 {
+				t.Fatal("the flight was over before it started")
+			}
+
+			// By the last live frame all but the stragglers have landed. The
+			// frame after this one is the text itself, untouched.
+			dst.CopyFrom(target)
+			ef.Frame(dst, last)
+			stillOut := wrongCells(dst, target)
+			if stillOut*10 > inkedTotal {
+				t.Fatalf("%d of %d characters are still out on the last frame; the paths do not converge",
+					stillOut, inkedTotal)
+			}
+		})
+	}
+}
+
+// rowsOverTime follows one character down a tall canvas, which is the only way
+// to tell one path from another: on a full page there is no saying which drawn
+// cell belongs to which character.
+// seenOverTime follows one character across a canvas with room on every side,
+// which is the only way to tell one path from another: on a full page there is
+// no saying which drawn cell belongs to which character.
+func seenOverTime(t *testing.T, name string, steps int) (seen []point, home point) {
+	t.Helper()
+	// Room on every side, or a path that goes the wrong way is simply clipped
+	// off the canvas and the test sees nothing at all.
+	home = point{x: 10, y: 4}
+	row := strings.Repeat(" ", 10) + "X"
+	target := canvas.FromText("\n\n\n\n"+row+"\n\n\n\n\n\n\n\n\n", canvas.Default)
+	entry, ok := Get(name)
+	if !ok {
+		t.Fatalf("%s is not registered", name)
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(9, 9)))
+	dst := canvas.New(target.W, target.H)
+
+	for i := range steps {
+		at := time.Duration(i) * 40 * time.Millisecond
+		dst.CopyFrom(target)
+		if !ef.Frame(dst, at) {
+			break
+		}
+		count, left, _, top, _ := inked(dst)
+		if count == 0 {
+			// Off the canvas for the moment.
+			continue
+		}
+		seen = append(seen, point{x: float64(left), y: float64(top)})
+	}
+	return seen, home
+}
+
+func topRows(seen []point) []int {
+	rows := make([]int, 0, len(seen))
+	for _, s := range seen {
+		rows = append(rows, int(s.y))
+	}
+	return rows
+}
+
+// Falling is monotonic; bouncing is not. That is the whole difference between
+// these two, and it lives in four lines of path.
+func TestRainFallsStraightWhileBouncyballsBounces(t *testing.T) {
+	seen, homeAt := seenOverTime(t, "rain", 60)
+	fall, home := topRows(seen), int(homeAt.y)
+	if len(fall) < 3 {
+		t.Fatalf("rain was only visible for %d frames", len(fall))
+	}
+	for i, row := range fall {
+		if row > home {
+			t.Fatalf("rain was seen at row %d, below its place at %d; it comes from above", row, home)
+		}
+		if i == 0 || fall[i] >= fall[i-1] {
+			continue
+		}
+		t.Fatalf("rain went back up, from row %d to %d; it should only fall", fall[i-1], fall[i])
+	}
+
+	bounceSeen, _ := seenOverTime(t, "bouncyballs", 60)
+	bounce := topRows(bounceSeen)
+	if len(bounce) < 3 {
+		t.Fatalf("bouncyballs was only visible for %d frames", len(bounce))
+	}
+	rose := false
+	for i := 1; i < len(bounce); i++ {
+		if bounce[i] < bounce[i-1] {
+			rose = true
+		}
+	}
+	if !rose {
+		t.Fatal("bouncyballs never came back up; it is just falling")
+	}
+}
+
+// The pull is what names it: at the bottom of the fall the text occupies far
+// less of the screen than it does at rest.
+func TestBlackholePullsTheTextIntoAPoint(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnopqrst\n", 12), canvas.Default)
+	_, homeL, homeR, homeT, homeB := inked(target)
+	homeArea := (homeR - homeL + 1) * (homeB - homeT + 1)
+
+	pulled := frameAt(t, "blackhole", target, 4, time.Duration(float64(blackholeRun)*blackholeFall))
+	count, l, r, tp, b := inked(pulled)
+	if count == 0 {
+		t.Fatal("nothing was on screen at the bottom of the fall")
+	}
+	area := (r - l + 1) * (b - tp + 1)
+	if area*2 > homeArea {
+		t.Fatalf("at the bottom of the fall the text covers %d cells against %d at rest; nothing was pulled in",
+			area, homeArea)
+	}
+}
+
+func spanOf(seen []point) (minX, maxX, minY, maxY float64) {
+	minX, minY = math.Inf(1), math.Inf(1)
+	maxX, maxY = math.Inf(-1), math.Inf(-1)
+	for _, s := range seen {
+		minX, maxX = math.Min(minX, s.x), math.Max(maxX, s.x)
+		minY, maxY = math.Min(minY, s.y), math.Max(maxY, s.y)
+	}
+	return minX, maxX, minY, maxY
+}
+
+// Rising is the easy half; the sway is what makes it a bubble rather than rain
+// running backwards, and it is four lines of path that nothing else would miss.
+func TestBubblesRiseAndSway(t *testing.T) {
+	seen, home := seenOverTime(t, "bubbles", 80)
+	if len(seen) < 5 {
+		t.Fatalf("bubbles was only visible for %d frames", len(seen))
+	}
+	minX, maxX, _, _ := spanOf(seen)
+	for _, s := range seen {
+		if s.y >= home.y {
+			continue
+		}
+		t.Fatalf("a bubble was seen at row %v, above its place at %v; they come from below", s.y, home.y)
+	}
+	if maxX-minX < 2 {
+		t.Fatalf("the bubble wandered %v columns; it went straight up", maxX-minX)
+	}
+}
+
+// The same drop as rain, with weather on it: the wind is the whole difference.
+func TestThunderstormLeansWhileRainDoesNot(t *testing.T) {
+	storm, _ := seenOverTime(t, "thunderstorm", 80)
+	still, _ := seenOverTime(t, "rain", 80)
+	if len(storm) < 5 {
+		t.Fatalf("thunderstorm was only visible for %d frames", len(storm))
+	}
+	stormMinX, stormMaxX, _, _ := spanOf(storm)
+	rainMinX, rainMaxX, _, _ := spanOf(still)
+	if stormMaxX-stormMinX <= rainMaxX-rainMinX {
+		t.Fatalf("the storm drifted %v columns against rain's %v; there is no wind",
+			stormMaxX-stormMinX, rainMaxX-rainMinX)
+	}
+}
+
+// Shells launch from below the text, which is what separates the climb from
+// bouncyballs -- both go up and down, but only one starts underneath.
+func TestFireworksLaunchFromBelow(t *testing.T) {
+	seen, home := seenOverTime(t, "fireworks", 80)
+	if len(seen) < 5 {
+		t.Fatalf("fireworks was only visible for %d frames", len(seen))
+	}
+	_, _, _, lowest := spanOf(seen)
+	if lowest <= home.y {
+		t.Fatalf("the shell never got below its place at %v; it did not launch", home.y)
+	}
+}
+
+// The order is the effect: the lower rows are already sitting there while the
+// upper ones are still on their way.
+func TestPourFillsFromTheBottomUp(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghij\n", 10), canvas.Default)
+	dst := frameAt(t, "pour", target, 6, pourRun/2)
+
+	top, bottom := 0, 0
+	half := target.H / 2
+	for y := range target.H {
+		for x := range target.W {
+			if dst.At(x, y) != target.At(x, y) {
+				continue
+			}
+			if y < half {
+				top++
+				continue
+			}
+			bottom++
+		}
+	}
+	if bottom <= top {
+		t.Fatalf("%d cells settled in the lower half against %d in the upper; it is not filling from the bottom",
+			bottom, top)
+	}
+}
+
+// A flock is a part of the text, not a random draw: put neighbours in different
+// flocks and they arrive from different directions, which is scattered wearing
+// another name.
+func TestSwarmFlocksAreRegionsNotARandomDraw(t *testing.T) {
+	together, apart := 0, 0
+	for y := range 20 {
+		for x := range 20 {
+			if swarmGroupOf(x, y) == swarmGroupOf(x+1, y) {
+				together++
+			}
+			if swarmGroupOf(x, y) != swarmGroupOf(x+swarmBlock*2, y) {
+				apart++
+			}
+		}
+	}
+	// Neighbours nearly always share; a draw at random would agree one time in
+	// swarmGroups, so anything near that is not grouping by region at all.
+	if together*swarmGroups < 20*20*2 {
+		t.Fatalf("only %d of 400 neighbouring pairs share a flock", together)
+	}
+	if apart == 0 {
+		t.Fatal("distant characters always share a flock; there is only one")
+	}
+}
+
+// The orbit is what names it. A single character on a wide canvas is the only
+// way to watch one: its bearing from the middle has to swing round, where every
+// other flight walks a line.
+func TestRingsCarryCharactersRoundTheMiddle(t *testing.T) {
+	seen, _ := seenOverTime(t, "rings", 80)
+	if len(seen) < 6 {
+		t.Fatalf("rings was only visible for %d frames", len(seen))
+	}
+	// Turning shows up as movement on both axes; a straight run at any angle
+	// keeps a constant ratio between them.
+	minX, maxX, minY, maxY := spanOf(seen)
+	if maxX-minX < 3 || maxY-minY < 2 {
+		t.Fatalf("the character moved %v across and %v down; it did not go round",
+			maxX-minX, maxY-minY)
 	}
 }
