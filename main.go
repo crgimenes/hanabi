@@ -66,14 +66,7 @@ command is safe in a pipe.
 func run() int {
 	fs := flag.NewFlagSet("hanabi", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	list := fs.Bool("list", false, "")
-	asJSON := fs.Bool("json", false, "")
-	fps := fs.Int("fps", 60, "")
-	seed := fs.Uint64("seed", 1, "")
-	debug := fs.Bool("debug", false, "")
-	loop := fs.Bool("loop", false, "")
-	dwell := fs.Duration("dwell", 0, "")
-	showVersion := fs.Bool("version", false, "")
+	o := bindFlags(fs)
 
 	err := fs.Parse(os.Args[1:])
 	if errors.Is(err, flag.ErrHelp) {
@@ -85,15 +78,15 @@ func run() int {
 		return 2
 	}
 
-	if *showVersion {
+	if o.showVersion {
 		fmt.Println(Version)
 		return 0
 	}
-	if *list {
-		printList(*asJSON)
+	if o.list {
+		printList(os.Stdout, o.asJSON)
 		return 0
 	}
-	if *fps < 1 || *fps > 240 {
+	if o.fps < 1 || o.fps > 240 {
 		fmt.Fprintln(os.Stderr, "hanabi: -fps must be between 1 and 240")
 		return 2
 	}
@@ -111,7 +104,7 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "run 'hanabi -list' to see the available effects")
 		return 2
 	}
-	if *dwell < 0 {
+	if o.dwell < 0 {
 		fmt.Fprintln(os.Stderr, "hanabi: -dwell cannot be negative")
 		return 2
 	}
@@ -134,16 +127,25 @@ func run() int {
 		return 0
 	}
 
-	return animate(entries, target, opts{
-		fps:   *fps,
-		seed:  *seed,
-		debug: *debug,
-		loop:  *loop,
-		dwell: *dwell,
-	})
+	return animate(entries, target, *o)
 }
 
-func printList(asJSON bool) {
+// bindFlags keeps the flag surface in one place so a test can walk it and check
+// that the hand-written usage text still documents every one of them.
+func bindFlags(fs *flag.FlagSet) *opts {
+	o := &opts{}
+	fs.BoolVar(&o.list, "list", false, "")
+	fs.BoolVar(&o.asJSON, "json", false, "")
+	fs.IntVar(&o.fps, "fps", 60, "")
+	fs.Uint64Var(&o.seed, "seed", 1, "")
+	fs.BoolVar(&o.debug, "debug", false, "")
+	fs.BoolVar(&o.loop, "loop", false, "")
+	fs.DurationVar(&o.dwell, "dwell", 0, "")
+	fs.BoolVar(&o.showVersion, "version", false, "")
+	return o
+}
+
+func printList(w io.Writer, asJSON bool) {
 	entries := effect.List()
 	if asJSON {
 		type item struct {
@@ -154,13 +156,13 @@ func printList(asJSON bool) {
 		for _, e := range entries {
 			out = append(out, item{Name: e.Name, Desc: e.Desc})
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(out)
 		return
 	}
 	for _, e := range entries {
-		fmt.Printf("%s;%s\n", e.Name, e.Desc)
+		_, _ = fmt.Fprintf(w, "%s;%s\n", e.Name, e.Desc)
 	}
 }
 
@@ -200,11 +202,14 @@ func readSource(args []string) (b []byte, source string, err error) {
 }
 
 type opts struct {
-	fps   int
-	seed  uint64
-	debug bool
-	loop  bool
-	dwell time.Duration
+	list        bool
+	asJSON      bool
+	debug       bool
+	loop        bool
+	showVersion bool
+	fps         int
+	seed        uint64
+	dwell       time.Duration
 }
 
 // errQuit is the reader asking to stop and keep the text, not a failure.
@@ -352,9 +357,19 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 	}
 
 	start := time.Now()
-	status := 0
-	seed := o.seed
+	status := p.show(ctx, entries, o)
 
+	if o.debug {
+		reportDebug(os.Stderr, entries, p.frames, time.Since(start), r.Bytes, p.samples)
+	}
+	return status
+}
+
+// show plays the pass loop and reports the exit status. It is separate from
+// animate because this is the part that decides anything -- animate around it
+// only wires up the terminal, and the two want testing on very different terms.
+func (p *play) show(ctx context.Context, entries []effect.Entry, o opts) int {
+	seed := o.seed
 	for {
 		// #nosec G404 -- the animation is seeded so a given -seed replays frame
 		// for frame; unpredictability would be a defect here. The seed advances
@@ -362,9 +377,9 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 		rnd := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 		chain := make([]effect.Effect, 0, len(entries))
 		for _, e := range entries {
-			chain = append(chain, e.New(target, rnd))
+			chain = append(chain, e.New(p.target, rnd))
 		}
-		err = p.once(ctx, chain)
+		err := p.once(ctx, chain)
 		if err == nil && o.loop {
 			err = p.pause(ctx, o.dwell)
 		}
@@ -372,18 +387,13 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 		case errors.Is(err, errQuit):
 			p.finish()
 		case err != nil:
-			status = exitFor(err)
+			return exitFor(err)
 		case o.loop:
 			seed++
 			continue
 		}
-		break
+		return 0
 	}
-
-	if o.debug {
-		reportDebug(os.Stderr, entries, p.frames, time.Since(start), r.Bytes, p.samples)
-	}
-	return status
 }
 
 func exitFor(err error) int {
