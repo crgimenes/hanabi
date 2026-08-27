@@ -38,7 +38,10 @@ type Entry struct {
 }
 
 var all = []Entry{
+	{"burn", "A band of fire sweeps up through the text, recolouring as it goes", newBurn},
 	{"decrypt", "Random glyphs settle one by one into the text", newDecrypt},
+	{"matrix", "Columns of glyphs rain down, revealing the text behind them", newMatrix},
+	{"slide", "The whole picture slides in from the left", newSlide},
 	{"wipe", "A diagonal sweep reveals the text from the top-left", newWipe},
 }
 

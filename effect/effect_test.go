@@ -197,3 +197,56 @@ func countFrames(entry Entry) int {
 		elapsed += 16 * time.Millisecond
 	}
 }
+
+// slide is the one effect that reads and writes the same cells, so the walk
+// direction is load-bearing: going the other way smears the leftmost column
+// across the row. The end-state test cannot see that, because slide's last
+// frame returns without touching the canvas at all -- an effect whose final
+// frame is a no-op has its whole animation unguarded otherwise.
+func TestSlideShiftsWithoutSmearing(t *testing.T) {
+	target := canvas.FromText("abcdef\nghijkl\nmnopqr\n", canvas.Default)
+	entry, ok := Get("slide")
+	if !ok {
+		t.Fatal("slide is not registered")
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(1, 2)))
+	dst := canvas.New(target.W, target.H)
+
+	for _, off := range []int{5, 3, 1} {
+		elapsed := time.Duration(target.W-off) * (slideRun / time.Duration(target.W))
+		dst.CopyFrom(target)
+		ef.Frame(dst, elapsed)
+		for y := range target.H {
+			for x := range target.W {
+				want := target.At(x-off, y)
+				if got := dst.At(x, y); got != want {
+					t.Fatalf("offset %d: cell (%d,%d) = %+v, want %+v", off, x, y, got, want)
+				}
+			}
+		}
+	}
+}
+
+// An effect that quietly does nothing would pass every other test here: the
+// canvas starts as the text and has to end as the text, and doing nothing
+// satisfies both ends.
+func TestEveryEffectChangesTheCanvasWhileItRuns(t *testing.T) {
+	for _, entry := range List() {
+		t.Run(entry.Name, func(t *testing.T) {
+			target := canvas.FromText(sample, canvas.Default)
+			ef := entry.New(target, rand.New(rand.NewPCG(3, 4)))
+			dst := canvas.New(target.W, target.H)
+
+			for elapsed := time.Duration(0); elapsed < 3*time.Second; elapsed += 20 * time.Millisecond {
+				dst.CopyFrom(target)
+				ef.Frame(dst, elapsed)
+				for i := range dst.Cells {
+					if dst.Cells[i] != target.Cells[i] {
+						return
+					}
+				}
+			}
+			t.Fatal("the canvas never differed from the text; the effect draws nothing")
+		})
+	}
+}

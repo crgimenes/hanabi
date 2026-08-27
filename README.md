@@ -18,8 +18,9 @@ constraint: **a frame costs bytes proportional to what moved**, not to the size
 of the grid. That matters when the terminal is on the other side of a screen
 share rather than on your desk.
 
-Measured on the benchmark grid, a frame of `decrypt` costs about 48 bytes; a
-full repaint of the same grid runs past a kilobyte.
+Measured on 80x24 ANSI art, a frame costs 411 bytes for `wipe` and 2.8kB for
+`slide`, which moves every cell on every frame and is the worst case here. A
+full repaint of that grid is around 38kB.
 
 ## Install
 
@@ -48,10 +49,11 @@ still descrambling, and takes as long as the slower of the two.
 Effects that mask, substitute or recolour compose in any order. Two effects that
 both move characters will fight over the same cells; the last one wins.
 
-`-loop` replays until interrupted, with `-dwell` holding the finished text
-between passes -- the idle screen the project was written for, something to
-leave running on a shared terminal. Press **q** to jump straight to the finished
-text and exit; Ctrl-C aborts where it is.
+`-loop` replays until interrupted -- the idle screen the project was written for,
+something to leave running on a shared terminal. It runs straight through by
+default; `-dwell` holds the finished text between passes when you want a pause.
+Press **q** to jump straight to the finished text and exit; Ctrl-C aborts where
+it is.
 
 ## ANSI art
 
@@ -80,7 +82,8 @@ $ iconv -f CP437 -t UTF-8 old.ans | hanabi wipe
 ```
 
 ```console
-$ hanabi -loop -dwell 10s wipe,decrypt logo.txt
+$ hanabi -loop wipe,decrypt logo.txt
+$ hanabi -loop -dwell 5s burn,matrix logo.txt
 $ hanabi -loop "$(hanabi -list | cut -d';' -f1 | paste -sd, -)" logo.txt
 ```
 
@@ -99,8 +102,15 @@ standard error.
 
 | Name | Description |
 |---|---|
+| `burn` | A band of fire sweeps up through the text, recolouring as it goes |
 | `decrypt` | Random glyphs settle one by one into the text |
+| `matrix` | Columns of glyphs rain down, revealing the text behind them |
+| `slide` | The whole picture slides in from the left |
 | `wipe` | A diagonal sweep reveals the text from the top-left |
+
+`burn` only recolours and `slide` only moves; the rest hide and substitute. That
+is what decides how they layer: anything composes with `burn`, and `slide` is the
+only one that would fight another mover for the same cells.
 
 ## Dependencies
 

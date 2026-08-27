@@ -44,7 +44,7 @@ than one effect layers them: they run together, on the same frames.
 Press q to jump to the finished text and exit; Ctrl-C aborts where it is.
 
   -loop          replay until interrupted
-  -dwell dur     how long the finished text is held between passes (default 3s)
+  -dwell dur     hold the finished text this long between passes (default none)
   -list          list the available effects and exit
   -json          machine-readable output for -list
   -fps int       frames per second (default 60)
@@ -58,7 +58,7 @@ When standard output is not a terminal the text is printed unchanged, so the
 command is safe in a pipe.
 
   figlet hanabi | hanabi decrypt
-  hanabi -loop -dwell 10s wipe,decrypt logo.txt
+  hanabi -loop wipe,decrypt logo.txt
   hanabi -loop "$(hanabi -list | cut -d';' -f1 | paste -sd, -)" logo.txt
 `)
 }
@@ -72,7 +72,7 @@ func run() int {
 	seed := fs.Uint64("seed", 1, "")
 	debug := fs.Bool("debug", false, "")
 	loop := fs.Bool("loop", false, "")
-	dwell := fs.Duration("dwell", 3*time.Second, "")
+	dwell := fs.Duration("dwell", 0, "")
 	showVersion := fs.Bool("version", false, "")
 
 	err := fs.Parse(os.Args[1:])
