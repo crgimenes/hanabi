@@ -90,6 +90,7 @@ func (r *Renderer) Draw(back *Canvas) error {
 
 	r.buf = r.buf[:0]
 	r.buf = append(r.buf, sgrReset...)
+	body := len(r.buf)
 	r.fg, r.bg, r.bold = Default, Default, false
 	r.x, r.y = 0, 0
 
@@ -108,6 +109,13 @@ func (r *Renderer) Draw(back *Canvas) error {
 	}
 
 	r.moveTo(0, 0)
+	if len(r.buf) == body {
+		// Nothing moved. Even the pair of resets would be bytes spent on a
+		// frame the reader cannot tell from the one before it, and a sparse
+		// effect spends most of its frames here: typing changes one cell every
+		// tenth of a second and is asked for sixty.
+		return nil
+	}
 	r.buf = append(r.buf, sgrReset...)
 	copy(r.front.Cells, back.Cells)
 	r.full = false

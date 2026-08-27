@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"os/signal"
 	"slices"
@@ -396,15 +395,7 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 func (p *play) show(ctx context.Context, entries []effect.Entry, o opts) int {
 	seed := o.seed
 	for {
-		// #nosec G404 -- the animation is seeded so a given -seed replays frame
-		// for frame; unpredictability would be a defect here. The seed advances
-		// per pass so a loop does not repeat itself, and still replays as a whole.
-		rnd := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
-		chain := make([]effect.Effect, 0, len(entries))
-		for _, e := range entries {
-			chain = append(chain, e.New(p.target, rnd))
-		}
-		err := p.once(ctx, chain)
+		err := p.once(ctx, effect.NewChain(entries, p.target, seed))
 		if err == nil && o.loop {
 			err = p.pause(ctx, o.dwell)
 		}
@@ -429,26 +420,18 @@ func exitFor(err error) int {
 	return 1
 }
 
-// once plays the chain to completion, or until the context is cancelled. Every
-// effect runs on the same frame, over the same elapsed time, so naming several
-// of them layers their work instead of queueing it.
-func (p *play) once(ctx context.Context, chain []effect.Effect) error {
+// once plays one pass to completion, or until the context is cancelled.
+func (p *play) once(ctx context.Context, ef effect.Effect) error {
 	start := time.Now()
 	for {
 		p.refit()
 
 		elapsed := time.Since(start)
 		frameStart := time.Now()
-		// Each frame is rebuilt from the finished text and handed down the
-		// chain, so an effect transforms what the one before it produced.
+		// Each frame is rebuilt from the finished text and handed to the chain,
+		// so an effect transforms what the one before it produced.
 		p.dst.CopyFrom(p.target)
-		more := false
-		for _, ef := range chain {
-			// Not short-circuited: every effect has to advance its own state.
-			if ef.Frame(p.dst, elapsed) {
-				more = true
-			}
-		}
+		more := ef.Frame(p.dst, elapsed)
 		err := p.r.Draw(p.dst)
 		p.frames++
 		if len(p.samples) < maxSamples {

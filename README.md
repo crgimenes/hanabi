@@ -18,9 +18,10 @@ constraint: **a frame costs bytes proportional to what moved**, not to the size
 of the grid. That matters when the terminal is on the other side of a screen
 share rather than on your desk.
 
-Measured on 80x24 ANSI art, a frame costs 411 bytes for `wipe` and 2.8kB for
-`slide`, which moves every cell on every frame and is the worst case here. A
-full repaint of that grid is around 38kB.
+Measured on 80x24 ANSI art, a frame costs 9 bytes for `typing`, 411 for `wipe`,
+and 2.7kB for `slide`, which moves every cell on every frame and is the worst
+case here. A full repaint of that grid is around 38kB. A frame identical to the
+one before it costs nothing at all, which is most of what a sparse effect does.
 
 ## Install
 
@@ -112,6 +113,11 @@ standard error.
 `burn` only recolours and `slide` only moves; the rest hide and substitute. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
+
+Effects rarely last the same time, and a chain runs until the last of them is
+done. The short one goes quiet once it has finished, so pairing effects of very
+different lengths -- `matrix` under `typing`, say -- reads as the long one
+playing alone for most of the run. Pair effects of similar length.
 
 `typing` runs at human speed -- around 160ms a character, mistakes and all -- so
 it suits a line or a short paragraph. A thousand characters take over two

@@ -245,11 +245,9 @@ func TestDrawSendsNothingForAnUnchangedFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Draw: %v", err)
 	}
-	if out.Len() >= first {
-		t.Fatalf("repeat frame cost %d bytes, first frame cost %d; the diff is not working", out.Len(), first)
-	}
-	if bytes.ContainsRune(out.Bytes(), 'a') {
-		t.Fatalf("repeat frame carried cell content: %q", out.String())
+	if out.Len() != 0 {
+		t.Fatalf("a frame identical to the last one cost %d bytes: %q (the first cost %d)",
+			out.Len(), out.String(), first)
 	}
 }
 

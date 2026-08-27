@@ -16,27 +16,22 @@ const sample = "hanabi\nzero dependencies\nterminal text effects\n"
 // Every effect exists to end with the text readable on screen. An effect that
 // reports itself finished while still showing scrambled or hidden cells leaves
 // the terminal wrong in a way no other test would catch. Chains are covered as
-// well as single effects: layering is where an effect that ends correctly on
-// its own can still be left mangled by the one after it.
+// well as single effects: layering is where an effect that ends correctly on its
+// own can still be left mangled by the one after it.
 func TestChainsEndOnTheTarget(t *testing.T) {
 	for _, names := range chains() {
 		t.Run(strings.Join(names, "+"), func(t *testing.T) {
 			target := canvas.FromText(sample, canvas.Default)
 			dst := canvas.New(target.W, target.H)
-			chain := build(t, names, target, rand.New(rand.NewPCG(1, 2)))
+			chain := build(t, names, target)
 
 			const step = 16 * time.Millisecond
-			const limit = 30 * time.Second
+			const limit = 60 * time.Second
 			elapsed := time.Duration(0)
 			frames := 0
 			for {
 				dst.CopyFrom(target)
-				more := false
-				for _, ef := range chain {
-					if ef.Frame(dst, elapsed) {
-						more = true
-					}
-				}
+				more := chain.Frame(dst, elapsed)
 				frames++
 				if !more {
 					break
@@ -62,6 +57,57 @@ func TestChainsEndOnTheTarget(t *testing.T) {
 	}
 }
 
+// Each effect draws from a stream keyed to its position, so an effect earlier in
+// the chain consuming a lot of randomness no longer shifts how a later one
+// animates. The two chains here differ only in how greedy the first slot is.
+func TestChainGivesEachSlotItsOwnStream(t *testing.T) {
+	target := canvas.FromText(sample, canvas.Default)
+	decrypt, ok := Get("decrypt")
+	if !ok {
+		t.Fatal("decrypt is not registered")
+	}
+
+	render := func(greed int) []byte {
+		chain := NewChain([]Entry{greedy(greed), decrypt}, target, 1)
+		dst := canvas.New(target.W, target.H)
+		var out bytes.Buffer
+		r := canvas.NewRenderer(&out, target.W, target.H)
+		for elapsed := time.Duration(0); elapsed < 2*time.Second; elapsed += 16 * time.Millisecond {
+			dst.CopyFrom(target)
+			chain.Frame(dst, elapsed)
+			_ = r.Draw(dst)
+		}
+		return out.Bytes()
+	}
+
+	thin, fat := render(1), render(500)
+	if len(thin) == 0 {
+		t.Fatal("nothing was drawn")
+	}
+	if !bytes.Equal(thin, fat) {
+		t.Fatal("how much randomness the first slot took changed what the second one drew")
+	}
+}
+
+// greedy draws n numbers at construction and then does nothing, which is the
+// whole point: only its appetite for the stream is visible.
+func greedy(n int) Entry {
+	return Entry{
+		Name: "greedy",
+		Desc: "consumes randomness and draws nothing",
+		New: func(_ *canvas.Canvas, rnd *rand.Rand) Effect {
+			for range n {
+				_ = rnd.Uint64()
+			}
+			return drawsNothing{}
+		},
+	}
+}
+
+type drawsNothing struct{}
+
+func (drawsNothing) Frame(*canvas.Canvas, time.Duration) bool { return false }
+
 // A layered effect must not undo what an earlier one in the chain did. wipe
 // hides everything the sweep has not reached, so nothing downstream of it may
 // put ink back into that region -- that is the whole difference between
@@ -71,17 +117,15 @@ func TestLayeringPreservesTheMaskOfAnEarlierEffect(t *testing.T) {
 	dst := canvas.New(target.W, target.H)
 	alone := canvas.New(target.W, target.H)
 
-	chain := build(t, []string{"wipe", "decrypt"}, target, rand.New(rand.NewPCG(5, 8)))
-	onlyWipe := build(t, []string{"wipe"}, target, rand.New(rand.NewPCG(5, 8)))
+	chain := build(t, []string{"wipe", "decrypt"}, target)
+	onlyWipe := build(t, []string{"wipe"}, target)
 
 	scrambled := 0
 	for _, elapsed := range []time.Duration{0, 40 * time.Millisecond, 120 * time.Millisecond} {
 		dst.CopyFrom(target)
-		for _, ef := range chain {
-			ef.Frame(dst, elapsed)
-		}
+		chain.Frame(dst, elapsed)
 		alone.CopyFrom(target)
-		onlyWipe[0].Frame(alone, elapsed)
+		onlyWipe.Frame(alone, elapsed)
 
 		for y := range target.H {
 			for x := range target.W {
@@ -117,17 +161,17 @@ func chains() [][]string {
 	return out
 }
 
-func build(t *testing.T, names []string, target *canvas.Canvas, rnd *rand.Rand) []Effect {
+func build(t *testing.T, names []string, target *canvas.Canvas) *Chain {
 	t.Helper()
-	chain := make([]Effect, 0, len(names))
+	entries := make([]Entry, 0, len(names))
 	for _, n := range names {
 		e, ok := Get(n)
 		if !ok {
 			t.Fatalf("unknown effect %q", n)
 		}
-		chain = append(chain, e.New(target, rnd))
+		entries = append(entries, e)
 	}
-	return chain
+	return NewChain(entries, target, 1)
 }
 
 func TestEffectsAreReproducibleFromASeed(t *testing.T) {

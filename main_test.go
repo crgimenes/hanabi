@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -321,18 +320,13 @@ func testTarget() *canvas.Canvas {
 	return canvas.FromText("hanabi\nzero deps\n", canvas.Default)
 }
 
-func testChain(t *testing.T, names string, target *canvas.Canvas) []effect.Effect {
+func testChain(t *testing.T, names string, target *canvas.Canvas) effect.Effect {
 	t.Helper()
 	entries, err := parseEffects(names)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rnd := rand.New(rand.NewPCG(1, 2))
-	chain := make([]effect.Effect, 0, len(entries))
-	for _, e := range entries {
-		chain = append(chain, e.New(target, rnd))
-	}
-	return chain
+	return effect.NewChain(entries, target, 1)
 }
 
 func TestOnceRunsTheChainToCompletion(t *testing.T) {
@@ -405,8 +399,7 @@ func TestFinishDrawsTheWholeText(t *testing.T) {
 	defer p.ticker.Stop()
 
 	// Stop a scrambling effect early, then finish.
-	chain := testChain(t, "decrypt", target)
-	chain[0].Frame(p.dst, 0)
+	testChain(t, "decrypt", target).Frame(p.dst, 0)
 	err := p.r.Draw(p.dst)
 	if err != nil {
 		t.Fatal(err)
@@ -673,8 +666,7 @@ func TestOnceCutShortByTheGuardStillLeavesTheWholeText(t *testing.T) {
 	defer p.ticker.Stop()
 	p.maxRun = 20 * time.Millisecond
 
-	chain := testChain(t, "decrypt", target)
-	err := p.once(context.Background(), []effect.Effect{forever{inner: chain[0]}})
+	err := p.once(context.Background(), forever{inner: testChain(t, "decrypt", target)})
 	if !errors.Is(err, errQuit) {
 		t.Fatalf("got %v, want errQuit so the caller draws the finished text", err)
 	}
