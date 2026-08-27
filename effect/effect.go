@@ -38,15 +38,22 @@ type Entry struct {
 }
 
 var all = []Entry{
+	{"beams", "Bright lines sweep across at their own angles", newBeams},
 	{"burn", "A band of fire sweeps up through the text, recolouring as it goes", newBurn},
+	{"colorshift", "A moving spectrum runs through the text", newColorshift},
 	{"decrypt", "Random glyphs settle one by one into the text", newDecrypt},
 	{"expand", "The picture grows out of a point in the middle", newExpand},
 	{"glitch", "Rows tear sideways and lose their colour, then settle", newGlitch},
+	{"highlight", "A specular band shines across, changing no colour", newHighlight},
+	{"laseretch", "A white-hot point walks the text, trailing heat", newLaseretch},
 	{"matrix", "Columns of glyphs rain down, revealing the text behind them", newMatrix},
 	{"scattered", "Characters are thrown apart and find their way back", newScattered},
 	{"slide", "The whole picture slides in from the left", newSlide},
+	{"smoke", "Drifting smoke greys whatever it crosses", newSmoke},
 	{"spotlight", "A beam sweeps over the text, lighting only what it falls on", newSpotlight},
+	{"sweep", "A front lays colour down, then a second takes it away", newSweep},
 	{"typing", "Somebody types the text, uneven, pausing, backspacing over mistakes", newTyping},
+	{"waves", "Bands of colour roll through the text", newWaves},
 	{"wipe", "A diagonal sweep reveals the text from the top-left", newWipe},
 }
 

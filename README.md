@@ -108,20 +108,37 @@ standard error.
 
 | Name | Description |
 |---|---|
+| `beams` | Bright lines sweep across at their own angles |
 | `burn` | A band of fire sweeps up through the text, recolouring as it goes |
+| `colorshift` | A moving spectrum runs through the text |
 | `decrypt` | Random glyphs settle one by one into the text |
 | `expand` | The picture grows out of a point in the middle |
 | `glitch` | Rows tear sideways and lose their colour, then settle |
+| `highlight` | A specular band shines across, changing no colour |
+| `laseretch` | A white-hot point walks the text, trailing heat |
 | `matrix` | Columns of glyphs rain down, revealing the text behind them |
 | `scattered` | Characters are thrown apart and find their way back |
 | `slide` | The whole picture slides in from the left |
+| `smoke` | Drifting smoke greys whatever it crosses |
 | `spotlight` | A beam sweeps over the text, lighting only what it falls on |
+| `sweep` | A front lays colour down, then a second takes it away |
 | `typing` | Somebody types the text, uneven, pausing, backspacing over mistakes |
+| `waves` | Bands of colour roll through the text |
 | `wipe` | A diagonal sweep reveals the text from the top-left |
 
-`burn` only recolours; `slide`, `glitch`, `scattered` and `expand` move cells,
-each in its own way -- the whole picture, whole rows, every character on its own,
-and a change of size; the rest hide and substitute. That
+They fall into three kinds, and the kind is what decides how they layer.
+
+**Colour only** -- `beams`, `burn`, `colorshift`, `highlight`, `laseretch`,
+`smoke`, `sweep`, `waves`. They never hide a cell, never move one, and never
+change which character is in it, so any of them goes over any of the others.
+`highlight` changes no colour at all, only weight, which leaves ANSI art's own
+palette intact.
+
+**Hide and substitute** -- `decrypt`, `matrix`, `spotlight`, `typing`, `wipe`.
+
+**Move cells** -- `slide` carries the whole picture, `glitch` whole rows,
+`scattered` every character on its own, `expand` changes the size. Two movers in
+one chain fight over the same cells. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
 

@@ -29,6 +29,16 @@ func Palette(i int) Color {
 	return palette | Color(i&0xf)
 }
 
+// RGB reports the colour's components, and whether it has any: Default and a
+// palette index name a colour the terminal chooses, so there is nothing to read.
+func (c Color) RGB() (r, g, b uint8, ok bool) {
+	if c == Default || c&palette != 0 {
+		return 0, 0, 0, false
+	}
+	r, g, b = c.parts()
+	return r, g, b, true
+}
+
 func (c Color) parts() (r, g, b uint8) {
 	r = uint8((c >> 16) & 0xff)
 	g = uint8((c >> 8) & 0xff)

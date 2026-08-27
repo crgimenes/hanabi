@@ -728,3 +728,163 @@ func TestExpandGrowsFromTheMiddle(t *testing.T) {
 		t.Fatalf("at the end the picture is %dx%d, want %dx%d", maxX-minX+1, maxY-minY+1, wantW, wantH)
 	}
 }
+
+// colourOnly names the effects that promise to recolour and nothing else: they
+// never hide a cell, never move one, and never change what character is in it.
+// That promise is what lets any of them layer over any of the maskers, so it is
+// worth holding them to it as a family rather than one at a time.
+var colourOnly = []string{"beams", "colorshift", "highlight", "laseretch", "smoke", "sweep", "waves"}
+
+func sampleTimes(run time.Duration) []time.Duration {
+	var out []time.Duration
+	for i := 1; i < 10; i++ {
+		out = append(out, run*time.Duration(i)/10)
+	}
+	return out
+}
+
+func TestColourOnlyEffectsNeverHideOrMoveAnything(t *testing.T) {
+	target := canvas.FromText(sample, canvas.RGB(120, 130, 140))
+	for _, name := range colourOnly {
+		t.Run(name, func(t *testing.T) {
+			entry, ok := Get(name)
+			if !ok {
+				t.Fatalf("%s is not registered", name)
+			}
+			ef := entry.New(target, rand.New(rand.NewPCG(2, 3)))
+			dst := canvas.New(target.W, target.H)
+
+			for _, at := range sampleTimes(3 * time.Second) {
+				dst.CopyFrom(target)
+				ef.Frame(dst, at)
+				for y := range target.H {
+					for x := range target.W {
+						got, want := dst.At(x, y), target.At(x, y)
+						if got.R == want.R {
+							continue
+						}
+						t.Fatalf("t=%s: cell (%d,%d) holds %q, want %q; this effect may only recolour",
+							at, x, y, got.R, want.R)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestColourOnlyEffectsActuallyRecolour(t *testing.T) {
+	target := canvas.FromText(sample, canvas.RGB(120, 130, 140))
+	for _, name := range colourOnly {
+		t.Run(name, func(t *testing.T) {
+			entry, _ := Get(name)
+			ef := entry.New(target, rand.New(rand.NewPCG(2, 3)))
+			dst := canvas.New(target.W, target.H)
+
+			for _, at := range sampleTimes(3 * time.Second) {
+				dst.CopyFrom(target)
+				ef.Frame(dst, at)
+				for i := range dst.Cells {
+					if dst.Cells[i] != target.Cells[i] {
+						return
+					}
+				}
+			}
+			t.Fatal("never differed from the text; the effect draws nothing")
+		})
+	}
+}
+
+// Seven effects written in one sitting off one idea is exactly where two of them
+// come out as the same thing under different names.
+func TestColourOnlyEffectsDifferFromEachOther(t *testing.T) {
+	target := canvas.FromText(sample, canvas.RGB(120, 130, 140))
+	seen := map[string]string{}
+
+	for _, name := range colourOnly {
+		entry, _ := Get(name)
+		ef := entry.New(target, rand.New(rand.NewPCG(2, 3)))
+		dst := canvas.New(target.W, target.H)
+		var out bytes.Buffer
+		r := canvas.NewRenderer(&out, target.W, target.H)
+		for _, at := range sampleTimes(3 * time.Second) {
+			dst.CopyFrom(target)
+			ef.Frame(dst, at)
+			_ = r.Draw(dst)
+		}
+		key := out.String()
+		if other, clash := seen[key]; clash {
+			t.Fatalf("%s and %s draw exactly the same thing", name, other)
+		}
+		seen[key] = name
+	}
+}
+
+// colourDistance measures how far a drawn cell has been pushed from the text,
+// rather than whether it moved at all. A cell blended a tenth of the way toward
+// some hue is visually the text; counting it as "changed" is what made the first
+// version of this test call every wind-down a light switch.
+func colourDistance(got, want canvas.Cell) int {
+	d := 0
+	if got.Bold != want.Bold {
+		d += 64
+	}
+	gr, gg, gb, gok := got.FG.RGB()
+	wr, wg, wb, wok := want.FG.RGB()
+	if !gok || !wok {
+		if got.FG != want.FG {
+			d += 255
+		}
+		return d
+	}
+	d += abs(int(gr)-int(wr)) + abs(int(gg)-int(wg)) + abs(int(gb)-int(wb))
+	return d
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// An effect that is simply switched off at the end pops: the reader sees a
+// coloured screen become a plain one between two frames. Each of these has to
+// have faded most of the way back before it reports itself finished.
+//
+// It holds the ones that colour the whole text -- colorshift, waves, smoke --
+// where an abrupt end is most glaring. It does not reliably hold the sparse
+// ones: beams covers a narrow, shifting band, so measuring its last frame
+// against its own peak cannot tell a fade from the beams simply being elsewhere.
+func TestColourOnlyEffectsWindDownBeforeTheyStop(t *testing.T) {
+	target := canvas.FromText(sample, canvas.RGB(120, 130, 140))
+	for _, name := range colourOnly {
+		t.Run(name, func(t *testing.T) {
+			entry, _ := Get(name)
+			ef := entry.New(target, rand.New(rand.NewPCG(2, 3)))
+			dst := canvas.New(target.W, target.H)
+
+			// Finely, so that "the last frame drawn" really is the last one and
+			// not whichever coarse sample happened to land before the end.
+			peak, last := 0, 0
+			for at := time.Duration(0); at < 4*time.Second; at += 10 * time.Millisecond {
+				dst.CopyFrom(target)
+				more := ef.Frame(dst, at)
+				total := 0
+				for i := range dst.Cells {
+					total += colourDistance(dst.Cells[i], target.Cells[i])
+				}
+				peak = max(peak, total)
+				if more {
+					last = total
+				}
+			}
+			if peak == 0 {
+				t.Fatal("nothing was ever recoloured")
+			}
+			if last*4 > peak {
+				t.Fatalf("the last frame drawn is still at %d%% of the effect's strongest; it ends abruptly",
+					last*100/peak)
+			}
+		})
+	}
+}
