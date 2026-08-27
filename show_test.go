@@ -293,3 +293,22 @@ func TestFnBodyRecordsEveryExpression(t *testing.T) {
 		t.Fatalf("recorded %d shots and %d pauses, want 2 and 2", shots, pauses)
 	}
 }
+
+func TestShotAcceptsASpeedAndRefusesANonsenseOne(t *testing.T) {
+	steps, err := parseShow(`(shot "wipe" "x" 0.5)`, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps[0].speed != 0.5 {
+		t.Fatalf("recorded speed %v, want 0.5", steps[0].speed)
+	}
+
+	_, err = parseShow(`(shot "wipe" "x" 99)`, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "0.1..10") {
+		t.Fatalf("a nonsense speed was accepted: %v", err)
+	}
+	_, err = parseShow(`(shot "wipe" "x" "fast")`, t.TempDir())
+	if err == nil {
+		t.Fatal("a string speed was accepted")
+	}
+}

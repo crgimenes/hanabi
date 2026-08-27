@@ -6,6 +6,8 @@
 (clear)
 (shot "matrix" (file "art/invader.txt"))
 (pause 0.6)
+; The third argument is the shot's own pace: under 1 slows it down.
+(shot "spotlight" (file "art/invader.txt") 0.6)
 (shot "glitch,beams" (file "art/invader.txt"))
 (wait-key)
 (clear)
@@ -18,3 +20,5 @@
 
 ; Bacchikoi -- "bring it on!" -- drawn in braille by crg.
 (shot "blackhole,sweep" (file "art/bacchikoi.txt"))
+(pause 0.8)
+(shot "doomfire" (file "art/bacchikoi.txt"))

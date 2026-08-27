@@ -1458,3 +1458,151 @@ func TestRingsCarryCharactersRoundTheMiddle(t *testing.T) {
 			maxX-minX, maxY-minY)
 	}
 }
+
+// Scaled changes nothing but the clock: at factor 2 the animation at t is the
+// unscaled animation at 2t, frame for frame, and it finishes in half the time.
+func TestScaledOnlyBendsTheClock(t *testing.T) {
+	target := canvas.FromText(sample, canvas.Default)
+	entry, ok := Get("wipe")
+	if !ok {
+		t.Fatal("wipe is not registered")
+	}
+	plain := entry.New(target, rand.New(rand.NewPCG(1, 2)))
+	fast := Scaled(entry.New(target, rand.New(rand.NewPCG(1, 2))), 2)
+
+	a := canvas.New(target.W, target.H)
+	b := canvas.New(target.W, target.H)
+	for _, at := range []time.Duration{100 * time.Millisecond, 300 * time.Millisecond} {
+		a.CopyFrom(target)
+		plain.Frame(a, 2*at)
+		b.CopyFrom(target)
+		fast.Frame(b, at)
+		for i := range a.Cells {
+			if a.Cells[i] != b.Cells[i] {
+				t.Fatalf("t=%s: scaled frame differs from the plain frame at twice the time", at)
+			}
+		}
+	}
+
+	end := time.Duration(0)
+	dst := canvas.New(target.W, target.H)
+	for at := time.Duration(0); at < 5*time.Second; at += 10 * time.Millisecond {
+		dst.CopyFrom(target)
+		if !fast.Frame(dst, at) {
+			end = at
+			break
+		}
+	}
+	plainEnd := time.Duration(0)
+	fresh := entry.New(target, rand.New(rand.NewPCG(1, 2)))
+	for at := time.Duration(0); at < 5*time.Second; at += 10 * time.Millisecond {
+		dst.CopyFrom(target)
+		if !fresh.Frame(dst, at) {
+			plainEnd = at
+			break
+		}
+	}
+	if end >= plainEnd {
+		t.Fatalf("scaled by 2 ended at %v, unscaled at %v; it is not faster", end, plainEnd)
+	}
+}
+
+func TestScaledLeavesTheIdentityAlone(t *testing.T) {
+	entry, _ := Get("wipe")
+	target := canvas.FromText(sample, canvas.Default)
+	e := entry.New(target, rand.New(rand.NewPCG(1, 2)))
+	if Scaled(e, 1) != e {
+		t.Fatal("factor 1 wrapped the effect for nothing")
+	}
+	if Scaled(e, -3) != e {
+		t.Fatal("a nonsense factor must fall back to the effect itself")
+	}
+}
+
+func doomfireAt(t *testing.T, target *canvas.Canvas, seed uint64, times []time.Duration) *canvas.Canvas {
+	t.Helper()
+	entry, ok := Get("doomfire")
+	if !ok {
+		t.Fatal("doomfire is not registered")
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)))
+	dst := canvas.New(target.W, target.H)
+	for _, at := range times {
+		dst.CopyFrom(target)
+		ef.Frame(dst, at)
+	}
+	return dst
+}
+
+// Mid-burn the flames have to own a real share of the canvas, and by the end
+// every one of them has to be gone. The end-state test cannot see the second
+// half: the final frame draws nothing, which is exactly the promise.
+func TestDoomfireBurnsHighAndDiesOut(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghijklmnopqrst\n", 12), canvas.Default)
+
+	mid := doomfireAt(t, target, 3, []time.Duration{2 * time.Second})
+	flames := 0
+	shades := map[rune]bool{}
+	for i := range mid.Cells {
+		switch mid.Cells[i].R {
+		case '█', '▓', '▒', '░':
+			flames++
+			shades[mid.Cells[i].R] = true
+		}
+	}
+	if flames*4 < len(mid.Cells) {
+		t.Fatalf("%d of %d cells aflame at the peak; the fire never caught", flames, len(mid.Cells))
+	}
+	// The decay is what grades the flame: without it every burning cell sits at
+	// full intensity and the fire is a solid white block, not fire.
+	if len(shades) < 3 {
+		t.Fatalf("only %d flame shades at the peak; the fire has no gradient", len(shades))
+	}
+
+	// Stepped past the cut, the way the player advances time.
+	times := []time.Duration{}
+	for at := time.Duration(0); at < 60*time.Second; at += 100 * time.Millisecond {
+		times = append(times, at)
+	}
+	entry, _ := Get("doomfire")
+	ef := entry.New(target, rand.New(rand.NewPCG(3, 3^0x9e3779b97f4a7c15)))
+	dst := canvas.New(target.W, target.H)
+	ended := false
+	for _, at := range times {
+		dst.CopyFrom(target)
+		if !ef.Frame(dst, at) {
+			ended = true
+			break
+		}
+	}
+	if !ended {
+		t.Fatal("the fire never went out")
+	}
+	if diff := firstDiff(target, dst); diff != "" {
+		t.Fatalf("after dying out: %s", diff)
+	}
+}
+
+// The simulation advances by steps derived from t, so two clocks sampling at
+// different rates have to agree wherever they land on the same moment. This is
+// the property that keeps a simulation inside the pure-function-of-t contract.
+func TestDoomfireIsFrameRateIndependent(t *testing.T) {
+	target := canvas.FromText(strings.Repeat("abcdefghij\n", 8), canvas.Default)
+
+	coarse := doomfireAt(t, target, 7, []time.Duration{
+		480 * time.Millisecond, 960 * time.Millisecond, 1920 * time.Millisecond,
+	})
+	fine := doomfireAt(t, target, 7, func() []time.Duration {
+		var ts []time.Duration
+		for at := 16 * time.Millisecond; at <= 1920*time.Millisecond; at += 16 * time.Millisecond {
+			ts = append(ts, at)
+		}
+		return ts
+	}())
+
+	for i := range coarse.Cells {
+		if coarse.Cells[i] != fine.Cells[i] {
+			t.Fatalf("cell %d differs between a 60fps clock and a coarse one; the sim leaks frame rate", i)
+		}
+	}
+}

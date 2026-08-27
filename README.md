@@ -119,6 +119,7 @@ standard error.
 | `burn` | A band of fire sweeps up through the text, recolouring as it goes |
 | `colorshift` | A moving spectrum runs through the text |
 | `crumble` | The text drains, breaks into grit, is swept away and returns |
+| `doomfire` | The PSX DOOM fire climbs over the text and dies down to reveal it |
 | `decrypt` | Random glyphs settle one by one into the text |
 | `errorcorrect` | Characters sit in each other places until each pair is put right |
 | `expand` | The picture grows out of a point in the middle |
@@ -157,7 +158,7 @@ change which character is in it, so any of them goes over any of the others.
 `highlight` changes no colour at all, only weight, which leaves ANSI art's own
 palette intact.
 
-**Hide and substitute** -- `crumble`, `decrypt`, `matrix`, `middleout`,
+**Hide and substitute** -- `crumble`, `decrypt`, `doomfire`, `matrix`, `middleout`,
 `randomsequence`, `spotlight`, `synthgrid`, `typing`, `wipe`. `errorcorrect`
 belongs here only loosely: it hides nothing at all, showing the text complete but
 with pairs of characters in each other's places until it works through them.
@@ -199,7 +200,8 @@ same script always produces the same show.
 (shot "fireworks,burn" (file "finale.txt"))
 ```
 
-`(shot "effects" text)` plays a chain over a text; `(file "path")` reads a file,
+`(shot "effects" text)` plays a chain over a text, an optional third argument
+setting its pace (`0.6` runs it at six tenths speed); `(file "path")` reads a file,
 resolved against the script's own directory; `(pause seconds)` holds; `(wait-key)`
 waits for the reader, any key advancing; `(clear)` wipes the screen, which
 otherwise scrolls on down the terminal. Loops belong to the language: repeating

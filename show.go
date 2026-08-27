@@ -45,6 +45,9 @@ type showStep struct {
 	entries []effect.Entry
 	target  *canvas.Canvas
 	hold    time.Duration
+	// speed is the shot's own pace on top of the command line's: the script
+	// says how the show reads, the flag scales the whole sitting.
+	speed float64
 }
 
 // parseShow evaluates the script and returns the steps it recorded. dir is the
@@ -90,8 +93,8 @@ type recordFunc func(showStep) (filo.Value, error)
 
 func shotBuiltin(record recordFunc) filo.Builtin {
 	return func(_ context.Context, args []filo.Value) (filo.Value, error) {
-		if len(args) != 2 {
-			return filo.VBool(false), errors.New(`shot: want (shot "effect,effect" text)`)
+		if len(args) != 2 && len(args) != 3 {
+			return filo.VBool(false), errors.New(`shot: want (shot "effect,effect" text [speed])`)
 		}
 		names, err := args[0].AsString()
 		if err != nil {
@@ -109,7 +112,17 @@ func shotBuiltin(record recordFunc) filo.Builtin {
 		if target.W == 0 || target.H == 0 {
 			return filo.VBool(false), errors.New("shot: the text is empty")
 		}
-		return record(showStep{kind: stepShot, entries: entries, target: target})
+		speed := 1.0
+		if len(args) == 3 {
+			speed, err = args[2].AsNumber()
+			if err != nil {
+				return filo.VBool(false), fmt.Errorf("shot: speed: %w", err)
+			}
+			if speed < 0.1 || speed > 10 {
+				return filo.VBool(false), fmt.Errorf("shot: speed %v is outside 0.1..10", speed)
+			}
+		}
+		return record(showStep{kind: stepShot, entries: entries, target: target, speed: speed})
 	}
 }
 
@@ -191,7 +204,7 @@ func playSteps(s *session, steps []showStep, seed uint64, o opts) (status int, q
 		case stepShot:
 			// #nosec G115 -- a step index is never negative. The multiplier keeps
 			// shot seeds apart from the pass-advance, which only adds one.
-			status, quit = playShot(s, st, seed^(uint64(i+1)*0x9e3779b97f4a7c15))
+			status, quit = playShot(s, st, seed^(uint64(i+1)*0x9e3779b97f4a7c15), st.speed*o.speed)
 			if quit || status != 0 {
 				return status, quit
 			}
@@ -221,7 +234,7 @@ func quitStatus(err error) (status int, quit bool) {
 	return exitFor(err), true
 }
 
-func playShot(s *session, st showStep, seed uint64) (status int, quit bool) {
+func playShot(s *session, st showStep, seed uint64, speed float64) (status int, quit bool) {
 	cols, rows := terminalSize()
 	w := min(st.target.W, cols)
 	h := min(st.target.H, rows)
@@ -246,7 +259,7 @@ func playShot(s *session, st showStep, seed uint64) (status int, quit bool) {
 		reserved: h,
 		maxRun:   maxRun,
 	}
-	err = p.once(s.ctx, effect.NewChain(st.entries, st.target, seed))
+	err = p.once(s.ctx, effect.Scaled(effect.NewChain(st.entries, st.target, seed), speed))
 	if errors.Is(err, errQuit) {
 		p.finish()
 		err = nil

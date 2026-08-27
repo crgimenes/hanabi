@@ -46,6 +46,7 @@ var all = []Entry{
 	{"burn", "A band of fire sweeps up through the text, recolouring as it goes", newBurn},
 	{"colorshift", "A moving spectrum runs through the text", newColorshift},
 	{"crumble", "The text drains, breaks into grit, is swept away and returns", newCrumble},
+	{"doomfire", "The PSX DOOM fire climbs over the text and dies down to reveal it", newDoomfire},
 	{"decrypt", "Random glyphs settle one by one into the text", newDecrypt},
 	{"errorcorrect", "Characters sit in each other places until each pair is put right", newErrorcorrect},
 	{"expand", "The picture grows out of a point in the middle", newExpand},

@@ -57,6 +57,7 @@ Press q to jump to the finished text and exit; Ctrl-C aborts where it is.
 
   -loop          replay until interrupted
   -dwell dur     hold the finished text this long between passes (default none)
+  -speed n       pace multiplier, 2 twice as fast, 0.5 half (default 1)
   -list          list the available effects and exit
   -json          machine-readable output for -list
   -fps int       frames per second (default 60)
@@ -101,6 +102,10 @@ func run() int {
 	}
 	if o.fps < 1 || o.fps > 240 {
 		fmt.Fprintln(os.Stderr, "hanabi: -fps must be between 1 and 240")
+		return 2
+	}
+	if o.speed < 0.1 || o.speed > 10 {
+		fmt.Fprintln(os.Stderr, "hanabi: -speed must be between 0.1 and 10")
 		return 2
 	}
 
@@ -190,6 +195,7 @@ func bindFlags(fs *flag.FlagSet) *opts {
 	fs.BoolVar(&o.debug, "debug", false, "")
 	fs.BoolVar(&o.loop, "loop", false, "")
 	fs.DurationVar(&o.dwell, "dwell", 0, "")
+	fs.Float64Var(&o.speed, "speed", 1, "")
 	fs.BoolVar(&o.showVersion, "version", false, "")
 	return o
 }
@@ -271,6 +277,7 @@ type opts struct {
 	showVersion bool
 	fps         int
 	seed        uint64
+	speed       float64
 	dwell       time.Duration
 }
 
@@ -471,7 +478,7 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 func (p *play) show(ctx context.Context, entries []effect.Entry, o opts) int {
 	seed := o.seed
 	for {
-		err := p.once(ctx, effect.NewChain(entries, p.target, seed))
+		err := p.once(ctx, effect.Scaled(effect.NewChain(entries, p.target, seed), o.speed))
 		if err == nil && o.loop {
 			err = p.pause(ctx, o.dwell)
 		}

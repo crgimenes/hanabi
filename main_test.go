@@ -544,6 +544,7 @@ func TestRunExitCodes(t *testing.T) {
 		{name: "negative dwell", args: []string{"-dwell", "-1s", "wipe"}, want: 2},
 		{name: "missing file", args: []string{"wipe", "/nonexistent/art.ans"}, want: 1},
 		{name: "missing show", args: []string{"/nonexistent/show.filo"}, want: 1},
+		{name: "speed out of range", args: []string{"-speed", "50", "wipe"}, want: 2},
 		{name: "show with extra args", args: []string{"show.filo", "extra"}, want: 2},
 	}
 	for _, tt := range tests {
