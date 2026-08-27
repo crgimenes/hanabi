@@ -110,6 +110,10 @@ func run() int {
 	}
 
 	text, err := readInput(args[1:])
+	if errors.Is(err, errNoInput) {
+		fmt.Fprintln(os.Stderr, "hanabi:", err)
+		return 2
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "hanabi:", err)
 		return 1
@@ -186,8 +190,21 @@ func readInput(args []string) (string, error) {
 		"  iconv -f CP437 -t UTF-8 %s | hanabi <effect>", source, name)
 }
 
+// errNoInput is a usage mistake, not a failure: the file was forgotten.
+var errNoInput = errors.New(`no input: name a file, or pipe text in
+  hanabi wipe art.ans
+  cat art.ans | hanabi wipe
+  hanabi wipe -        (to type it, ending with Ctrl-D)`)
+
 func readSource(args []string) (b []byte, source string, err error) {
 	if len(args) == 0 || args[0] == "-" {
+		// A terminal on standard input with no file named means the argument
+		// was forgotten. Without this the program sits mute until the reader
+		// works out that it is waiting for Ctrl-D. Asking for "-" explicitly is
+		// taken at its word, the way cat does.
+		if len(args) == 0 && term.IsTerminal(int(os.Stdin.Fd())) {
+			return nil, "", errNoInput
+		}
 		b, err = io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, "", fmt.Errorf("reading standard input: %w", err)

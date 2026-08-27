@@ -631,3 +631,34 @@ func TestExitForReportsAnUnexpectedFailure(t *testing.T) {
 		t.Fatalf("a write failure exits %d, want 1", got)
 	}
 }
+
+// Environment dependent by nature: it needs a real terminal on standard input,
+// which no CI runner has. It never reads from the terminal -- the check returns
+// before that -- so it cannot hang.
+func TestReadInputRefusesATerminalWhenTheFileWasForgotten(t *testing.T) {
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		t.Skip("no controlling terminal here:", err)
+	}
+	defer func() { _ = tty.Close() }()
+
+	saved := os.Stdin
+	os.Stdin = tty
+	t.Cleanup(func() { os.Stdin = saved })
+
+	_, err = readInput(nil)
+	if !errors.Is(err, errNoInput) {
+		t.Fatalf("got %v, want errNoInput", err)
+	}
+	for _, want := range []string{"name a file", "cat art.ans |", "Ctrl-D"} {
+		if strings.Contains(err.Error(), want) {
+			continue
+		}
+		t.Errorf("the message does not teach the fix, missing %q: %v", want, err)
+	}
+
+	// The "-" case is deliberately not exercised here. With a terminal it
+	// blocks until someone types, which is correct, and testing that needs a
+	// goroutine racing the test's own lifetime. That path is covered against a
+	// pipe in TestReadInputFallsBackToStandardInput.
+}
