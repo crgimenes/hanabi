@@ -9,17 +9,26 @@ import (
 	"github.com/crgimenes/hanabi/canvas"
 )
 
-// Effect draws one frame of an animation.
+// Effect transforms one frame of an animation.
 type Effect interface {
-	// Frame paints the state at elapsed time t into dst and reports whether
-	// the animation still has work left. The last frame must equal the target
-	// exactly, so the text stays on screen once the run ends.
-	Frame(dst *canvas.Canvas, t time.Duration) bool
+	// Frame reworks c in place for elapsed time t and reports whether it still
+	// has work left.
+	//
+	// c arrives holding the finished text, or the output of the effect before
+	// it in the chain -- which is what lets effects be composed rather than
+	// merely sequenced. An effect that only masks or substitutes cells (rather
+	// than reading the original text) composes with anything.
+	//
+	// Once every effect in a chain reports itself finished, the canvas has to
+	// equal the finished text, or the terminal is left showing the wrong thing.
+	Frame(c *canvas.Canvas, t time.Duration) bool
 }
 
-// Ctor builds an effect for one run. rnd is seeded by the caller; an effect
-// must take every random decision from it and never from the global source, or
-// the same seed stops reproducing the same animation.
+// Ctor builds an effect for one run. target is the finished text, for an effect
+// that needs its extent or a per-cell schedule; the canvas passed to Frame is
+// the one to read and write. rnd is seeded by the caller; an effect must take
+// every random decision from it and never from the global source, or the same
+// seed stops reproducing the same animation.
 type Ctor func(target *canvas.Canvas, rnd *rand.Rand) Effect
 
 type Entry struct {

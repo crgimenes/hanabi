@@ -36,14 +36,51 @@ $ hanabi -list
 $ hanabi wipe logo.txt
 $ cat logo.txt | hanabi decrypt
 $ hanabi -seed 42 -fps 30 decrypt logo.txt
+$ hanabi wipe,decrypt logo.txt
 ```
 
-`-loop` replays until interrupted, cycling through the effects you name, with
-`-dwell` holding the finished text in between. This is the idle screen the
-project was written for -- something to leave running on a shared terminal.
+Naming more than one effect **layers** them: they run together, over the same
+frames, rather than one after the other. Each frame is rebuilt from the finished
+text and handed down the chain, so an effect transforms what the one before it
+produced -- `wipe,decrypt` sweeps the text in while the revealed characters are
+still descrambling, and takes as long as the slower of the two.
+
+Effects that mask, substitute or recolour compose in any order. Two effects that
+both move characters will fight over the same cells; the last one wins.
+
+`-loop` replays until interrupted, with `-dwell` holding the finished text
+between passes -- the idle screen the project was written for, something to
+leave running on a shared terminal. Press **q** to jump straight to the finished
+text and exit; Ctrl-C aborts where it is.
+
+## ANSI art
+
+Input may carry SGR colour sequences, so ANSI art animates like any other text:
 
 ```console
-$ hanabi -loop -dwell 10s decrypt,wipe logo.txt
+$ hanabi -loop wipe,decrypt ~/art/skull.ans
+```
+
+The 16 named colours are passed through as their own codes rather than resolved
+to fixed RGB, so art written against the palette still follows the reader's
+terminal theme. Bold is carried too, because on the named colours it selects the
+bright half of the palette and art leans on that. 256-colour and truecolor are
+read as the exact values they name.
+
+Cursor-forward (`ESC[17C`), which old art uses to skip blanks instead of writing
+spaces, is honoured. Any other escape sequence is dropped: drawing it would put
+cells on screen that show nothing and shift the rest of the line.
+
+**Input must be UTF-8.** That is a decision, not an omission -- guessing an
+encoding only moves the mojibake somewhere harder to see. BBS-era `.ans` art is
+usually CP437, and hanabi refuses it with the command that converts it:
+
+```console
+$ iconv -f CP437 -t UTF-8 old.ans | hanabi wipe
+```
+
+```console
+$ hanabi -loop -dwell 10s wipe,decrypt logo.txt
 $ hanabi -loop "$(hanabi -list | cut -d';' -f1 | paste -sd, -)" logo.txt
 ```
 

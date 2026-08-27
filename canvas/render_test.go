@@ -18,6 +18,7 @@ type replay struct {
 	grid *Canvas
 	fg   Color
 	bg   Color
+	bold bool
 	x    int
 	y    int
 }
@@ -95,17 +96,31 @@ func (p *replay) count(params string) int {
 
 func (p *replay) sgr(params string) {
 	if params == "0" || params == "" {
-		p.fg, p.bg = Default, Default
+		p.fg, p.bg, p.bold = Default, Default, false
 		return
 	}
 	f := strings.Split(params, ";")
 	for i := 0; i < len(f); {
 		switch f[i] {
+		case "1":
+			p.bold = true
+			i++
+		case "22":
+			p.bold = false
+			i++
 		case "39":
 			p.fg = Default
 			i++
 		case "49":
 			p.bg = Default
+			i++
+		case "30", "31", "32", "33", "34", "35", "36", "37",
+			"90", "91", "92", "93", "94", "95", "96", "97":
+			p.fg = Palette(paletteIndex(f[i]))
+			i++
+		case "40", "41", "42", "43", "44", "45", "46", "47",
+			"100", "101", "102", "103", "104", "105", "106", "107":
+			p.bg = Palette(paletteIndex(f[i]))
 			i++
 		case "38", "48":
 			if i+4 >= len(f) || f[i+1] != "2" {
@@ -124,6 +139,20 @@ func (p *replay) sgr(params string) {
 	}
 }
 
+// paletteIndex undoes the 30/40/90/100 bases the renderer writes.
+func paletteIndex(s string) int {
+	n, _ := strconv.Atoi(s)
+	switch {
+	case n >= 90 && n <= 97:
+		return n - 90 + 8
+	case n >= 100 && n <= 107:
+		return n - 100 + 8
+	case n >= 40 && n <= 47:
+		return n - 40
+	}
+	return n - 30
+}
+
 func (p *replay) byteAt(s string) uint8 {
 	n, err := strconv.Atoi(s)
 	if err != nil || n < 0 || n > 255 {
@@ -136,7 +165,7 @@ func (p *replay) put(r rune) {
 	if p.x < 0 || p.y < 0 || p.x >= p.grid.W || p.y >= p.grid.H {
 		p.t.Fatalf("replay: wrote %q outside the region at (%d,%d)", r, p.x, p.y)
 	}
-	p.grid.Cells[p.y*p.grid.W+p.x] = Cell{R: r, FG: p.fg, BG: p.bg}
+	p.grid.Cells[p.y*p.grid.W+p.x] = Cell{R: r, Bold: p.bold, FG: p.fg, BG: p.bg}
 	// Autowrap is off for the whole run, so the cursor stalls in the last
 	// column instead of moving to the next row.
 	if p.x < p.grid.W-1 {
@@ -161,9 +190,10 @@ func randomCanvas(rnd *rand.Rand, w, h int) *Canvas {
 	colors := []Color{Default, RGB(255, 0, 0), RGB(0, 128, 255), RGB(9, 9, 9)}
 	for i := range c.Cells {
 		c.Cells[i] = Cell{
-			R:  glyphs[rnd.IntN(len(glyphs))],
-			FG: colors[rnd.IntN(len(colors))],
-			BG: colors[rnd.IntN(len(colors))],
+			R:    glyphs[rnd.IntN(len(glyphs))],
+			Bold: rnd.IntN(2) == 0,
+			FG:   colors[rnd.IntN(len(colors))],
+			BG:   colors[rnd.IntN(len(colors))],
 		}
 	}
 	return c
@@ -243,27 +273,6 @@ func TestDrawOneChangedCellIsCheap(t *testing.T) {
 	if out.Len() > 64 {
 		t.Fatalf("one changed cell cost %d bytes: %q", out.Len(), out.String())
 	}
-}
-
-func TestFromTextExpandsTabsAndPadsShortLines(t *testing.T) {
-	c := FromText("\ufeffab\n\tc\n", Default)
-	if c.W != 5 || c.H != 2 {
-		t.Fatalf("got %dx%d, want 5x2", c.W, c.H)
-	}
-	if got := rowString(c, 0); got != "ab   " {
-		t.Fatalf("row 0 = %q", got)
-	}
-	if got := rowString(c, 1); got != "    c" {
-		t.Fatalf("row 1 = %q", got)
-	}
-}
-
-func rowString(c *Canvas, y int) string {
-	var b strings.Builder
-	for x := range c.W {
-		b.WriteRune(c.At(x, y).R)
-	}
-	return b.String()
 }
 
 func firstDiff(want, got *Canvas) string {

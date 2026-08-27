@@ -3,6 +3,7 @@ package effect
 import (
 	"bytes"
 	"math/rand/v2"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,40 +13,120 @@ import (
 const sample = "hanabi\nzero dependencies\nterminal text effects\n"
 
 // Every effect exists to end with the text readable on screen. An effect that
-// reports itself finished while still showing scrambled cells leaves the
-// terminal wrong in a way no other test would catch.
-func TestEffectsEndOnTheTarget(t *testing.T) {
-	for _, entry := range List() {
-		t.Run(entry.Name, func(t *testing.T) {
+// reports itself finished while still showing scrambled or hidden cells leaves
+// the terminal wrong in a way no other test would catch. Chains are covered as
+// well as single effects: layering is where an effect that ends correctly on
+// its own can still be left mangled by the one after it.
+func TestChainsEndOnTheTarget(t *testing.T) {
+	for _, names := range chains() {
+		t.Run(strings.Join(names, "+"), func(t *testing.T) {
 			target := canvas.FromText(sample, canvas.Default)
-			rnd := rand.New(rand.NewPCG(1, 2))
-			ef := entry.New(target, rnd)
 			dst := canvas.New(target.W, target.H)
+			chain := build(t, names, target, rand.New(rand.NewPCG(1, 2)))
 
 			const step = 16 * time.Millisecond
 			const limit = 30 * time.Second
 			elapsed := time.Duration(0)
 			frames := 0
-			for ef.Frame(dst, elapsed) {
-				elapsed += step
+			for {
+				dst.CopyFrom(target)
+				more := false
+				for _, ef := range chain {
+					if ef.Frame(dst, elapsed) {
+						more = true
+					}
+				}
 				frames++
+				if !more {
+					break
+				}
+				elapsed += step
 				if elapsed > limit {
 					t.Fatalf("still running after %s of simulated time", limit)
 				}
 			}
-			if frames == 0 {
+			if frames < 2 {
 				t.Fatal("finished on the first frame; nothing would be animated")
 			}
 			for y := range target.H {
 				for x := range target.W {
 					want, got := target.At(x, y), dst.At(x, y)
-					if want != got {
-						t.Fatalf("after %d frames cell (%d,%d) = %+v, want %+v", frames, x, y, got, want)
+					if want == got {
+						continue
 					}
+					t.Fatalf("after %d frames cell (%d,%d) = %+v, want %+v", frames, x, y, got, want)
 				}
 			}
 		})
 	}
+}
+
+// A layered effect must not undo what an earlier one in the chain did. wipe
+// hides everything the sweep has not reached, so nothing downstream of it may
+// put ink back into that region -- that is the whole difference between
+// layering the effects and merely running the last one.
+func TestLayeringPreservesTheMaskOfAnEarlierEffect(t *testing.T) {
+	target := canvas.FromText(sample, canvas.Default)
+	dst := canvas.New(target.W, target.H)
+	alone := canvas.New(target.W, target.H)
+
+	chain := build(t, []string{"wipe", "decrypt"}, target, rand.New(rand.NewPCG(5, 8)))
+	onlyWipe := build(t, []string{"wipe"}, target, rand.New(rand.NewPCG(5, 8)))
+
+	scrambled := 0
+	for _, elapsed := range []time.Duration{0, 40 * time.Millisecond, 120 * time.Millisecond} {
+		dst.CopyFrom(target)
+		for _, ef := range chain {
+			ef.Frame(dst, elapsed)
+		}
+		alone.CopyFrom(target)
+		onlyWipe[0].Frame(alone, elapsed)
+
+		for y := range target.H {
+			for x := range target.W {
+				if alone.At(x, y) != canvas.Blank {
+					if dst.At(x, y) != target.At(x, y) {
+						scrambled++
+					}
+					continue
+				}
+				if dst.At(x, y) != canvas.Blank {
+					t.Fatalf("t=%s: cell (%d,%d) is hidden by wipe but the chain drew %+v",
+						elapsed, x, y, dst.At(x, y))
+				}
+			}
+		}
+	}
+	if scrambled == 0 {
+		t.Fatal("decrypt never scrambled a revealed cell; the chain ran wipe alone")
+	}
+}
+
+func chains() [][]string {
+	var out [][]string
+	for _, a := range List() {
+		out = append(out, []string{a.Name})
+		for _, b := range List() {
+			if a.Name == b.Name {
+				continue
+			}
+			out = append(out, []string{a.Name, b.Name})
+		}
+	}
+	return out
+}
+
+func build(t *testing.T, names []string, target *canvas.Canvas, rnd *rand.Rand) []Effect {
+	t.Helper()
+	chain := make([]Effect, 0, len(names))
+	for _, n := range names {
+		e, ok := Get(n)
+		if !ok {
+			t.Fatalf("unknown effect %q", n)
+		}
+		chain = append(chain, e.New(target, rnd))
+	}
+	return chain
 }
 
 func TestEffectsAreReproducibleFromASeed(t *testing.T) {
@@ -72,6 +153,7 @@ func renderRun(entry Entry, seed uint64) []byte {
 	r := canvas.NewRenderer(&out, target.W, target.H)
 	elapsed := time.Duration(0)
 	for {
+		dst.CopyFrom(target)
 		more := ef.Frame(dst, elapsed)
 		_ = r.Draw(dst)
 		if !more {
@@ -108,6 +190,7 @@ func countFrames(entry Entry) int {
 	elapsed := time.Duration(0)
 	for {
 		n++
+		dst.CopyFrom(target)
 		if !ef.Frame(dst, elapsed) {
 			return n
 		}

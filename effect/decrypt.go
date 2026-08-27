@@ -18,14 +18,14 @@ var (
 )
 
 type decrypt struct {
-	target *canvas.Canvas
+	w      int
 	settle []time.Duration
 	done   time.Duration
 }
 
 func newDecrypt(target *canvas.Canvas, rnd *rand.Rand) Effect {
 	d := &decrypt{
-		target: target,
+		w:      target.W,
 		settle: make([]time.Duration, len(target.Cells)),
 	}
 	for i := range d.settle {
@@ -37,23 +37,27 @@ func newDecrypt(target *canvas.Canvas, rnd *rand.Rand) Effect {
 	return d
 }
 
-func (d *decrypt) Frame(dst *canvas.Canvas, t time.Duration) bool {
-	// #nosec G115 -- t is elapsed time and i is a slice index; neither is
-	// ever negative, so the conversions cannot wrap.
+func (d *decrypt) Frame(c *canvas.Canvas, t time.Duration) bool {
+	// #nosec G115 -- t is elapsed time and i is a slice index; neither is ever
+	// negative, so the conversions cannot wrap.
 	tick := uint64(t / decryptSwap)
-	for y := range dst.H {
-		for x := range dst.W {
-			if x >= d.target.W || y >= d.target.H {
-				dst.Set(x, y, canvas.Blank)
+	for y := range c.H {
+		for x := range c.W {
+			// A blank is either real whitespace or a cell an earlier effect
+			// hid; scrambling it would paint over both.
+			cell := c.At(x, y)
+			if cell.R == ' ' {
 				continue
 			}
-			i := y*d.target.W + x
-			cell := d.target.Cells[i]
-			if t >= d.settle[i] || cell.R == ' ' {
-				dst.Set(x, y, cell)
+			i := y*d.w + x
+			if i >= len(d.settle) || t >= d.settle[i] {
 				continue
 			}
-			dst.Set(x, y, canvas.Cell{R: glyph(i, tick), FG: cipherColor, BG: canvas.Default})
+			// The background is left alone: in ANSI art it carries half the
+			// picture, and replacing it would flash the image to bare terminal.
+			cell.R = glyph(i, tick)
+			cell.FG = cipherColor
+			c.Set(x, y, cell)
 		}
 	}
 	return t < d.done
@@ -65,10 +69,9 @@ func glyph(cell int, tick uint64) rune {
 	return cipher[mix(uint64(cell), tick)%uint64(len(cipher))]
 }
 
-// mix is splitmix64 over the cell index and the frame tick. The scrambled
-// glyph has to be a pure function of both: Frame can be called at any t, so
-// drawing from the rand stream would make the animation depend on the frame
-// rate.
+// mix is splitmix64 over the cell index and the frame tick. The scrambled glyph
+// has to be a pure function of both: Frame can be called at any t, so drawing
+// from the rand stream would make the animation depend on the frame rate.
 func mix(a, b uint64) uint64 {
 	x := a*0x9e3779b97f4a7c15 + b
 	x ^= x >> 30

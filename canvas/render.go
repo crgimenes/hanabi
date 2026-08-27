@@ -27,10 +27,11 @@ type Renderer struct {
 	front *Canvas
 	buf   []byte
 
-	fg Color
-	bg Color
-	x  int
-	y  int
+	fg   Color
+	bg   Color
+	bold bool
+	x    int
+	y    int
 
 	full  bool
 	Bytes int64
@@ -50,7 +51,9 @@ func NewRenderer(w io.Writer, width, height int) *Renderer {
 func (r *Renderer) Begin() error {
 	r.buf = r.buf[:0]
 	for range r.front.H - 1 {
-		r.buf = append(r.buf, '\n')
+		// Explicit CR: reading keys puts the terminal in raw mode, and that
+		// turns off the driver's newline translation.
+		r.buf = append(r.buf, '\r', '\n')
 	}
 	// The newlines left the cursor on the last row of the region; without
 	// recording that, End would move down twice the distance and scroll.
@@ -87,7 +90,7 @@ func (r *Renderer) Draw(back *Canvas) error {
 
 	r.buf = r.buf[:0]
 	r.buf = append(r.buf, sgrReset...)
-	r.fg, r.bg = Default, Default
+	r.fg, r.bg, r.bold = Default, Default, false
 	r.x, r.y = 0, 0
 
 	for y := range back.H {
@@ -98,7 +101,7 @@ func (r *Renderer) Draw(back *Canvas) error {
 				continue
 			}
 			r.moveTo(x, y)
-			r.pen(cell.FG, cell.BG)
+			r.pen(cell.FG, cell.BG, cell.Bold)
 			r.buf = utf8.AppendRune(r.buf, cell.R)
 			r.x++
 		}
@@ -156,29 +159,51 @@ func (r *Renderer) up(n int) {
 	r.down(-n)
 }
 
-func (r *Renderer) pen(fg, bg Color) {
-	if fg == r.fg && bg == r.bg {
+func (r *Renderer) pen(fg, bg Color, bold bool) {
+	if fg == r.fg && bg == r.bg && bold == r.bold {
 		return
 	}
 	r.buf = append(r.buf, csi...)
 	wrote := false
-	if fg != r.fg {
-		r.buf = appendColor(r.buf, fg, 38, 39)
+	if bold != r.bold {
+		code := 22
+		if bold {
+			code = 1
+		}
+		r.buf = strconv.AppendInt(r.buf, int64(code), 10)
 		wrote = true
 	}
+	if fg != r.fg {
+		wrote = r.sep(wrote)
+		r.buf = appendColor(r.buf, fg, 38, 39)
+	}
 	if bg != r.bg {
-		if wrote {
-			r.buf = append(r.buf, ';')
-		}
+		r.sep(wrote)
 		r.buf = appendColor(r.buf, bg, 48, 49)
 	}
 	r.buf = append(r.buf, 'm')
-	r.fg, r.bg = fg, bg
+	r.fg, r.bg, r.bold = fg, bg, bold
+}
+
+func (r *Renderer) sep(wrote bool) bool {
+	if wrote {
+		r.buf = append(r.buf, ';')
+	}
+	return true
 }
 
 func appendColor(b []byte, c Color, set, unset int) []byte {
 	if c == Default {
 		return strconv.AppendInt(b, int64(unset), 10)
+	}
+	if c&palette != 0 {
+		// 30-37 and 40-47 for the normal colors, 90-97 and 100-107 for the
+		// bright half. set is 38 or 48, so set-8 gives the right base.
+		code := set - 8 + int(c&0x7)
+		if c&0x8 != 0 {
+			code += 60
+		}
+		return strconv.AppendInt(b, int64(code), 10)
 	}
 	red, green, blue := c.parts()
 	b = strconv.AppendInt(b, int64(set), 10)
