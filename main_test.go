@@ -312,6 +312,7 @@ func testPlay(out io.Writer, target *canvas.Canvas, keys <-chan key, winch <-cha
 		winch:    winch,
 		keys:     keys,
 		reserved: target.H,
+		maxRun:   maxRun,
 		samples:  make([]time.Duration, 0, 8),
 	}
 }
@@ -661,4 +662,28 @@ func TestReadInputRefusesATerminalWhenTheFileWasForgotten(t *testing.T) {
 	// blocks until someone types, which is correct, and testing that needs a
 	// goroutine racing the test's own lifetime. That path is covered against a
 	// pipe in TestReadInputFallsBackToStandardInput.
+}
+
+// The guard exists to stop a runaway effect, not to leave a half-drawn screen
+// behind. typing is the effect that can actually reach it: it runs at human
+// speed, so a long file takes minutes.
+func TestOnceCutShortByTheGuardStillLeavesTheWholeText(t *testing.T) {
+	target := testTarget()
+	p := testPlay(io.Discard, target, nil, nil)
+	defer p.ticker.Stop()
+	p.maxRun = 20 * time.Millisecond
+
+	chain := testChain(t, "decrypt", target)
+	err := p.once(context.Background(), []effect.Effect{forever{inner: chain[0]}})
+	if !errors.Is(err, errQuit) {
+		t.Fatalf("got %v, want errQuit so the caller draws the finished text", err)
+	}
+}
+
+// forever never reports itself finished, which is the shape maxRun is there for.
+type forever struct{ inner effect.Effect }
+
+func (f forever) Frame(c *canvas.Canvas, t time.Duration) bool {
+	f.inner.Frame(c, t)
+	return true
 }

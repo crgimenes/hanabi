@@ -25,7 +25,12 @@ var Version = "dev"
 
 // Guards a single effect run, in loop mode too: an effect that never reports
 // itself finished would otherwise hold the terminal with no way out but a
-// signal. The loop itself is unbounded on purpose, and ends on the interrupt.
+// signal. Reaching it is not a failure -- the run ends the way q ends it, with
+// the finished text on screen. The loop itself is unbounded on purpose, and
+// ends on the interrupt.
+//
+// It is a real ceiling, not a theoretical one: typing runs at human speed, so a
+// thousand characters take over two minutes.
 const maxRun = 5 * time.Minute
 
 const maxSamples = 4096
@@ -311,6 +316,8 @@ type play struct {
 	winch    <-chan os.Signal
 	keys     <-chan key
 	reserved int
+	// Injectable so a test can reach the guard without waiting for it.
+	maxRun time.Duration
 
 	frames  int
 	samples []time.Duration
@@ -370,6 +377,7 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 		winch:    winch,
 		keys:     keys,
 		reserved: h,
+		maxRun:   maxRun,
 		samples:  make([]time.Duration, 0, 256),
 	}
 
@@ -449,8 +457,13 @@ func (p *play) once(ctx context.Context, chain []effect.Effect) error {
 		if err != nil {
 			return err
 		}
-		if !more || elapsed > maxRun {
+		if !more {
 			return nil
+		}
+		// Cut short by the guard rather than finished: stop like q does, so the
+		// reader is left with the whole text instead of a half-drawn frame.
+		if elapsed > p.maxRun {
+			return errQuit
 		}
 
 		select {

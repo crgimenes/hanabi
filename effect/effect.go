@@ -42,6 +42,7 @@ var all = []Entry{
 	{"decrypt", "Random glyphs settle one by one into the text", newDecrypt},
 	{"matrix", "Columns of glyphs rain down, revealing the text behind them", newMatrix},
 	{"slide", "The whole picture slides in from the left", newSlide},
+	{"typing", "Somebody types the text, uneven, pausing, backspacing over mistakes", newTyping},
 	{"wipe", "A diagonal sweep reveals the text from the top-left", newWipe},
 }
 

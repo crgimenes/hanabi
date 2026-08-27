@@ -3,6 +3,7 @@ package effect
 import (
 	"bytes"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -248,5 +249,156 @@ func TestEveryEffectChangesTheCanvasWhileItRuns(t *testing.T) {
 			}
 			t.Fatal("the canvas never differed from the text; the effect draws nothing")
 		})
+	}
+}
+
+const typed = "hello world.\nthe second line is here\nand a third\n"
+
+func typingRun(t *testing.T, seed uint64) (*canvas.Canvas, Effect, time.Duration) {
+	t.Helper()
+	target := canvas.FromText(typed, canvas.Default)
+	entry, ok := Get("typing")
+	if !ok {
+		t.Fatal("typing is not registered")
+	}
+	ef := entry.New(target, rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)))
+	ty, ok := ef.(*typing)
+	if !ok {
+		t.Fatalf("typing is a %T", ef)
+	}
+	return target, ef, ty.done
+}
+
+// The end-state test cannot see this one: typing's last frame returns without
+// touching the canvas, so a mistake that never gets backspaced away would leave
+// the wrong text on screen for the whole run and still pass. What has to hold is
+// that the text is complete just before the effect declares itself finished.
+func TestTypingFinishesTheTextBeforeItStops(t *testing.T) {
+	// Seed 1 makes four mistakes over this text, so this also proves the
+	// corrections land rather than merely that nothing went wrong.
+	target, ef, done := typingRun(t, 1)
+	dst := canvas.New(target.W, target.H)
+
+	dst.CopyFrom(target)
+	ef.Frame(dst, done-time.Millisecond)
+	for y := range target.H {
+		for x := range target.W {
+			got, want := dst.At(x, y), target.At(x, y)
+			if got == want || got == cursorCell {
+				continue
+			}
+			t.Fatalf("just before finishing, cell (%d,%d) = %+v, want %+v", x, y, got, want)
+		}
+	}
+}
+
+// Every cell is either already typed, not yet typed, the cursor, or the one
+// mistake being made right now -- and that mistake has to be a key the finger
+// could plausibly have hit instead.
+//
+// Several seeds, because whether a given seed produces a typo at all is a coin
+// toss: seed 11 makes none over this text. Asserting on one draw would be a test
+// that passes by luck.
+func TestTypingOnlyEverDiffersAtOneCellAndOnlyByANeighbouringKey(t *testing.T) {
+	seeds := []uint64{1, 7, 11, 42, 99}
+	total := 0
+	for _, seed := range seeds {
+		target, ef, done := typingRun(t, seed)
+		dst := canvas.New(target.W, target.H)
+
+		for elapsed := time.Duration(0); elapsed < done; elapsed += 8 * time.Millisecond {
+			dst.CopyFrom(target)
+			ef.Frame(dst, elapsed)
+
+			wrong := 0
+			for y := range target.H {
+				for x := range target.W {
+					got, want := dst.At(x, y), target.At(x, y)
+					if got == want || got == canvas.Blank || got == cursorCell {
+						continue
+					}
+					wrong++
+					near, ok := qwertyNeighbours[toLower(want.R)]
+					if !ok || !strings.ContainsRune(near, toLower(got.R)) {
+						t.Fatalf("seed %d, t=%s: cell (%d,%d) shows %q, which is not a neighbour of %q",
+							seed, elapsed, x, y, got.R, want.R)
+					}
+				}
+			}
+			if wrong > 1 {
+				t.Fatalf("seed %d, t=%s: %d cells wrong at once; only the key under the finger may be",
+					seed, elapsed, wrong)
+			}
+			total += wrong
+		}
+	}
+	if total == 0 {
+		t.Fatalf("no mistake was made across %d seeds; the typo path is dead code", len(seeds))
+	}
+}
+
+// A typist who never varies is a teleprinter. This measures the intervals as a
+// whole, which is what a viewer perceives; it does not isolate the speed drift
+// from the deliberate pauses at punctuation and line ends, and a mutation that
+// pins the drift to a constant still passes here.
+func TestTypingSpeedIsUneven(t *testing.T) {
+	target := canvas.FromText(typed, canvas.Default)
+	entry, _ := Get("typing")
+	ty, ok := entry.New(target, rand.New(rand.NewPCG(11, 13))).(*typing)
+	if !ok {
+		t.Fatal("typing is a different type")
+	}
+
+	gaps := make([]time.Duration, 0, len(ty.steps))
+	prev := time.Duration(0)
+	for _, s := range ty.steps {
+		gaps = append(gaps, s.at-prev)
+		prev = s.at
+	}
+	if len(gaps) < 20 {
+		t.Fatalf("only %d keystrokes scheduled", len(gaps))
+	}
+	slices.Sort(gaps)
+	lo, hi := gaps[len(gaps)/10], gaps[len(gaps)*9/10]
+	if hi < lo*2 {
+		t.Fatalf("p90 gap %v is not meaningfully longer than p10 %v; the typing is metronomic", hi, lo)
+	}
+}
+
+// Correcting a mistake is a gesture, not just an outcome: the wrong character
+// has to be seen, then seen to go, then replaced. Dropping the erase step still
+// ends with the right text, so nothing else here would notice.
+func TestTypingBackspacesOverItsMistakes(t *testing.T) {
+	const (
+		untouched = iota
+		showedWrong
+		wasErased
+	)
+	// Seed 1 makes four mistakes over this text.
+	target, ef, done := typingRun(t, 1)
+	dst := canvas.New(target.W, target.H)
+	state := make([]int, len(target.Cells))
+	corrected := 0
+
+	for elapsed := time.Duration(0); elapsed < done; elapsed += 6 * time.Millisecond {
+		dst.CopyFrom(target)
+		ef.Frame(dst, elapsed)
+		for i := range target.Cells {
+			x, y := i%target.W, i/target.W
+			got, want := dst.At(x, y), target.At(x, y)
+			blank := got == canvas.Blank || got == cursorCell
+			switch {
+			case got != want && !blank:
+				state[i] = showedWrong
+			case state[i] == showedWrong && blank:
+				state[i] = wasErased
+			case state[i] == wasErased && got == want:
+				state[i] = untouched
+				corrected++
+			}
+		}
+	}
+	if corrected == 0 {
+		t.Fatal("no mistake was erased before the right character went in")
 	}
 }

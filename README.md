@@ -106,11 +106,17 @@ standard error.
 | `decrypt` | Random glyphs settle one by one into the text |
 | `matrix` | Columns of glyphs rain down, revealing the text behind them |
 | `slide` | The whole picture slides in from the left |
+| `typing` | Somebody types the text, uneven, pausing, backspacing over mistakes |
 | `wipe` | A diagonal sweep reveals the text from the top-left |
 
 `burn` only recolours and `slide` only moves; the rest hide and substitute. That
 is what decides how they layer: anything composes with `burn`, and `slide` is the
 only one that would fight another mover for the same cells.
+
+`typing` runs at human speed -- around 160ms a character, mistakes and all -- so
+it suits a line or a short paragraph. A thousand characters take over two
+minutes, and a run that reaches the five-minute ceiling stops the way `q` does,
+with the whole text on screen.
 
 ## Dependencies
 
