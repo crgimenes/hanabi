@@ -6,8 +6,14 @@
 (pause 1)
 
 ; Loops come from the language itself.
-(map (fn (i) (shot "wipe" "tick")) (range 2))
+(map
+  (fn
+    (i)
+    (shot "wipe" "tick"))
+  (range 2))
 
 (wait-key)
 (clear)
-(shot "fireworks,burn" (file "finale.txt"))
+(shot "fireworks,burn"
+  (file "finale.txt"))
+

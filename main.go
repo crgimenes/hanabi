@@ -48,10 +48,18 @@ is given or the file is "-". The finished text is left on screen. Naming more
 than one effect layers them: they run together, on the same frames.
 
 An argument ending in .filo is a show script: a Filo program that records a
-sequence of steps, played in order. Its builtins are (shot "effects" text),
-(file "path"), (pause seconds), (wait-key) and (clear); paths resolve against
-the script's own directory. During (wait-key) any key advances; q still quits
-and Ctrl-C still aborts.
+sequence of steps, played in order. Its builtins are (shot "effects" text
+[speed]), (file "path"), (pause seconds), (wait-key), (clear), (label "name")
+and (set-key "k" action), the actions being (quit), (next), (goto "label") and
+(none). Paths resolve against the script's own directory.
+
+In a show the script owns the keyboard: q stops the animation only because that
+is the default binding, and (set-key "q" (none)) releases it. Ctrl-C aborts
+whatever is bound and cannot be taken. An unbound key advances a (wait-key) and
+is ignored elsewhere.
+
+Filo's own (exit) still ends the script where it stands, which is how a show is
+written conditionally; (quit) is the action a key binding holds.
 
 Press q to jump to the finished text and exit; Ctrl-C aborts where it is.
 
@@ -172,16 +180,16 @@ func runShowFile(path string, o *opts) int {
 		fmt.Fprintf(os.Stderr, "hanabi: %s is not valid UTF-8\n", path)
 		return 1
 	}
-	steps, err := parseShow(string(b), filepath.Dir(path))
+	sh, err := parseShow(string(b), filepath.Dir(path))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hanabi: %s: %v\n", path, err)
 		return 1
 	}
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Print(showText(steps))
+		fmt.Print(showText(sh.steps))
 		return 0
 	}
-	return runShow(steps, *o)
+	return runShow(sh, *o)
 }
 
 // bindFlags keeps the flag surface in one place so a test can walk it and check
@@ -284,18 +292,57 @@ type opts struct {
 // errQuit is the reader asking to stop and keep the text, not a failure.
 var errQuit = errors.New("quit")
 
-type key int
+// jumpError is the reader asking a show to move somewhere else. The action
+// travels inside the error rather than in a field beside it, so whoever handles
+// it cannot be looking at a press other than the one that interrupted them.
+type jumpError struct{ to action }
+
+func (jumpError) Error() string { return "jump" }
+
+// A key is the byte the reader pressed. What it means is not decided here: the
+// keymap decides, and in a show the script owns the keymap.
+type key byte
+
+// keyInterrupt is the one binding a script cannot take: whatever else is bound,
+// Ctrl-C aborts. A script that could trap it could trap the reader.
+const keyInterrupt key = 0x03
+
+// action is what a key does. Anything beyond exiting only means something to a
+// show, which is the only thing with somewhere else to go.
+type action struct {
+	kind actionKind
+	// label names the step a jump lands on.
+	label string
+	// on is the key that was pressed, carried so a handler can be found again.
+	on key
+}
+
+type actionKind int
 
 const (
-	keyQuit key = iota
-	keyInterrupt
-	// Any other key. Animations ignore it; (wait-key) in a show consumes it.
-	keyAdvance
+	// actAdvance is the absence of a binding: nothing during an animation, and
+	// "get on with it" at a (wait-key).
+	actAdvance actionKind = iota
+	actExit
+	actNext
+	actGoto
+	// actCall defers the decision to a Filo function, run when the key is
+	// pressed rather than when the script is read.
+	actCall
 )
 
-// watchKeys puts the controlling terminal in raw mode and reports the keys the
-// animation reacts to. With no terminal to read from it returns a nil channel,
-// which a select never fires on, so the caller needs no special case.
+// keymap says what each key does. It starts with q bound to exit, which is the
+// behaviour of the effect mode and the sensible default for a show; a script
+// rebinding q is taken at its word.
+type keymap map[key]action
+
+func defaultKeymap() keymap {
+	return keymap{'q': {kind: actExit}, 'Q': {kind: actExit}}
+}
+
+// watchKeys puts the controlling terminal in raw mode and reports what the
+// reader presses. With no terminal to read from it returns a nil channel, which
+// a select never fires on, so the caller needs no special case.
 func watchKeys() (keys <-chan key, stop func()) {
 	tty, err := os.Open("/dev/tty")
 	if err != nil {
@@ -323,19 +370,16 @@ func readKeys(tty *os.File, keys chan key) {
 			return
 		}
 		for _, b := range buf[:n] {
-			k, ok := keyFor(b)
-			if !ok {
-				continue
-			}
+			k := key(b)
 			select {
 			case keys <- k:
 				continue
 			default:
 			}
-			// The channel holds one key. An ordinary key can be dropped on the
-			// floor, but q and Ctrl-C must displace whatever is sitting there:
-			// mashing keys and then pressing q has to quit.
-			if k == keyAdvance {
+			// The channel holds one key. Ctrl-C must displace whatever is
+			// sitting there -- mashing keys and then pressing it has to abort --
+			// while an ordinary key can be dropped on the floor.
+			if k != keyInterrupt {
 				continue
 			}
 			select {
@@ -350,26 +394,20 @@ func readKeys(tty *os.File, keys chan key) {
 	}
 }
 
-func keyFor(b byte) (key, bool) {
-	switch b {
-	case 'q', 'Q':
-		return keyQuit, true
-	case 0x03:
-		// Raw mode stops the driver turning this into SIGINT, so Ctrl-C has to
-		// be recognised here or it would do nothing at all.
-		return keyInterrupt, true
-	}
-	return keyAdvance, true
-}
-
 // stopErr says what a key means to whatever is in progress: nil is "not for
-// you, carry on".
-func stopErr(k key) error {
-	switch k {
-	case keyQuit:
-		return errQuit
-	case keyInterrupt:
+// you, carry on". A jump is not a stop, so it is reported as errJump and the
+// show reads the target from the binding.
+func (m keymap) stopErr(k key) error {
+	if k == keyInterrupt {
 		return context.Canceled
+	}
+	a := m[k]
+	a.on = k
+	switch a.kind {
+	case actExit:
+		return errQuit
+	case actNext, actGoto, actCall:
+		return jumpError{to: a}
 	}
 	return nil
 }
@@ -382,6 +420,7 @@ type play struct {
 	ticker   *time.Ticker
 	winch    <-chan os.Signal
 	keys     <-chan key
+	keymap   keymap
 	reserved int
 	// Injectable so a test can reach the guard without waiting for it.
 	maxRun time.Duration
@@ -411,6 +450,8 @@ type session struct {
 	keys   <-chan key
 	winch  <-chan os.Signal
 	ticker *time.Ticker
+	// keys is shared, so what a press means is decided here, in one place.
+	keymap keymap
 }
 
 func withSession(fps int, fn func(s *session) int) int {
@@ -427,7 +468,7 @@ func withSession(fps int, fn func(s *session) int) int {
 	ticker := time.NewTicker(time.Second / time.Duration(fps))
 	defer ticker.Stop()
 
-	return fn(&session{ctx: ctx, keys: keys, winch: winch, ticker: ticker})
+	return fn(&session{ctx: ctx, keys: keys, winch: winch, ticker: ticker, keymap: defaultKeymap()})
 }
 
 func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
@@ -457,6 +498,7 @@ func animate(entries []effect.Entry, target *canvas.Canvas, o opts) int {
 			ticker:   s.ticker,
 			winch:    s.winch,
 			keys:     s.keys,
+			keymap:   s.keymap,
 			reserved: h,
 			maxRun:   maxRun,
 			samples:  make([]time.Duration, 0, 256),
@@ -524,7 +566,10 @@ func (p *play) once(ctx context.Context, ef effect.Effect) error {
 			return err
 		}
 		if !more {
-			return nil
+			// The reader may have pressed something on this very frame. Left in
+			// the channel it would be read by whatever runs next, closing a
+			// screen nobody was looking at yet.
+			return p.pending()
 		}
 		// Cut short by the guard rather than finished: stop like q does, so the
 		// reader is left with the whole text instead of a half-drawn frame.
@@ -536,11 +581,28 @@ func (p *play) once(ctx context.Context, ef effect.Effect) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case k := <-p.keys:
-			err = stopErr(k)
+			err = p.keymap.stopErr(k)
 			if err != nil {
 				return err
 			}
 		case <-p.ticker.C:
+		}
+	}
+}
+
+// pending reports a decision the reader has already made but that no wait has
+// picked up yet. Ordinary keys are swallowed here: they meant "get on with it",
+// and the run they were aimed at is over.
+func (p *play) pending() error {
+	for {
+		select {
+		case k := <-p.keys:
+			err := p.keymap.stopErr(k)
+			if err != nil {
+				return err
+			}
+		default:
+			return nil
 		}
 	}
 }
@@ -574,7 +636,7 @@ func (p *play) pause(ctx context.Context, d time.Duration) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case k := <-p.keys:
-			err := stopErr(k)
+			err := p.keymap.stopErr(k)
 			if err != nil {
 				return err
 			}

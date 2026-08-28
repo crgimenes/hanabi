@@ -1,0 +1,90 @@
+; menu.filo binds keys to fixed actions. Here the keys hold functions, so the
+; decision is made when the key is pressed and the show can remember.
+;   hanabi examples/menu2.filo
+;
+; A handler runs only on a press, never per frame, and under the same limits as
+; the script itself.
+
+(def seen
+  (list))
+
+(def already?
+  (fn
+    (name)
+    (>
+      (length
+        (filter
+          (fn
+            (s)
+            (= s name)) seen)) 0)))
+
+(def visit
+  (fn
+    (name)
+    (if
+      (already? name) 0
+      (set seen
+        (list-append seen name)))
+    (goto name)))
+
+; The same key means something different once you have been somewhere.
+; Marks as it goes, or it would keep choosing the same section for ever.
+(def wander
+  (fn
+    ()
+    (cond
+      (
+        (not
+          (already? "one"))
+        (visit "one"))
+      (
+        (not
+          (already? "two"))
+        (visit "two"))
+      (else
+        (goto "done")))))
+
+(set-key "q"
+  (none))
+(set-key "x"
+  (quit))
+(set-key "1"
+  (fn
+    ()
+    (visit "one")))
+(set-key "2"
+  (fn
+    ()
+    (visit "two")))
+(set-key "n" wander)
+
+(label "menu")
+(shot "typing"
+  (str-join "\n"
+    (list "  1  the invader" "  2  the heart" "  n  next one you have not seen" "  x  leave")) 1.6)
+(wait-key)
+(jump "menu")
+
+(label "one")
+(clear)
+(shot "matrix,burn"
+  (file "art/invader.txt"))
+(wait-key)
+(jump "menu")
+
+(label "two")
+(clear)
+(shot "expand,colorshift"
+  (file "art/heart.txt"))
+(wait-key)
+(jump "menu")
+
+(label "done")
+(clear)
+; The text of a shot is built when the script runs, so it cannot report what a
+; handler counted later: a handler decides where the show goes, not what an
+; already recorded screen says.
+(shot "fireworks" "that is all of them\n\npress x to leave")
+(wait-key)
+(jump "menu")
+

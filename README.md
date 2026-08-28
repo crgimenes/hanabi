@@ -203,9 +203,65 @@ same script always produces the same show.
 `(shot "effects" text)` plays a chain over a text, an optional third argument
 setting its pace (`0.6` runs it at six tenths speed); `(file "path")` reads a file,
 resolved against the script's own directory; `(pause seconds)` holds; `(wait-key)`
-waits for the reader, any key advancing; `(clear)` wipes the screen, which
-otherwise scrolls on down the terminal. Loops belong to the language: repeating
-is `(map ... (range n))`. The [examples](examples/) directory holds three shows
+waits for the reader; `(clear)` wipes the screen, which otherwise scrolls on down
+the terminal. Loops belong to the language: repeating is `(map ... (range n))`.
+
+### Keys belong to the script
+
+`q` stops an animation because that is the default binding, not because the
+program insists on it. A show can move it, or let it go:
+
+```lisp
+(set-key "q" (none))          ; pressing it by accident now costs nothing
+(set-key "x" (quit))
+(set-key "1" (goto "intro"))  ; (label "intro") names the place
+(set-key "n" (next))          ; skip whatever is on screen
+```
+
+That is enough for menus: bind the digits to `(goto ...)`, put a `(label)` before
+each section, and `(wait-key)` at the end of them. See
+[examples/menu.filo](examples/menu.filo).
+
+`(quit)` is the action a key can hold. Filo's own `(exit)` is a different thing
+and still available: it ends the script where it stands, so everything recorded
+above it is the show. That is how a show is written conditionally.
+
+```lisp
+(shot "wipe" "always")
+(if short-version (exit) 0)
+(shot "typing" "only in the long version")
+```
+
+**Ctrl-C is not bindable.** Whatever a script does with the rest of the keyboard,
+the reader keeps a way out.
+
+An action can also be a function, and then the decision is made when the key is
+pressed rather than when the script is read. That is what lets a menu remember:
+
+```lisp
+(def seen (list))
+(def wander (fn ()
+  (cond
+    ((not (already? "one")) (visit "one"))
+    (else (goto "done")))))
+(set-key "n" wander)
+```
+
+A handler runs only on a press -- never per frame -- and under the same limits
+as the script, so a two-hour show still asks the evaluator for nothing between
+keys. It sees the globals the script left behind, and `(set ...)` inside it is
+remembered for the next press. `(jump "label")` is the show moving on its own,
+where `(goto "label")` is what a key does.
+
+**A shot's text is fixed when the script runs.** A handler decides where the show
+goes, not what an already recorded screen says: `(str-fmt "seen %v" (length seen))`
+in a shot reports what `seen` held while the playlist was being built.
+
+Filo is a whole language, not a configuration format: `def`, `cond`, `let`,
+closures, `filter`/`fold`/`map` are all there, and `str-*` and the maths builtins
+are registered for shows. `rand-*` and `print` deliberately are not -- one would
+stop a show replaying from its seed, the other would write into the middle of the
+animation. See [examples/menu2.filo](examples/menu2.filo). The [examples](examples/) directory holds three shows
 and a handful of small art files to run them on; `hanabi examples/hanabi.filo`
 is the tour.
 
