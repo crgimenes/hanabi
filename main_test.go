@@ -40,7 +40,7 @@ func TestUsageMentionsTheKeysItAcceptsAndTheDefaults(t *testing.T) {
 	var out strings.Builder
 	usage(&out)
 	text := out.String()
-	for _, want := range []string{"q ", "Ctrl-C", "standard input", "standard error"} {
+	for _, want := range []string{"any key", "Ctrl-C", "standard input", "standard error"} {
 		if strings.Contains(text, want) {
 			continue
 		}
@@ -171,34 +171,8 @@ func TestReadInputFallsBackToStandardInput(t *testing.T) {
 	}
 }
 
-// The default map is what the effect mode has always done, and what a show gets
-// before its script says otherwise.
-func TestDefaultKeymap(t *testing.T) {
-	m := defaultKeymap()
-	for _, k := range []key{'q', 'Q'} {
-		if !errors.Is(m.stopErr(k), errQuit) {
-			t.Errorf("%q does not quit by default", string(rune(k)))
-		}
-	}
-	if !errors.Is(m.stopErr(keyInterrupt), context.Canceled) {
-		t.Error("Ctrl-C does not abort")
-	}
-	for _, k := range []key{'a', 0x1b, ' '} {
-		if m.stopErr(k) != nil {
-			t.Errorf("%#x stops the animation; an unbound key must not", byte(k))
-		}
-	}
-}
-
-// q leaves the finished text and reports success; Ctrl-C is an abort and must
-// not be mistaken for one.
-func TestStopErrSeparatesQuittingFromInterrupting(t *testing.T) {
-	if got := exitFor(defaultKeymap().stopErr(keyInterrupt)); got != 130 {
-		t.Errorf("interrupt exits %d, want 130", got)
-	}
-	if !strings.Contains(defaultKeymap().stopErr('q').Error(), "quit") {
-		t.Errorf("quit does not report itself as a quit")
-	}
+// A signal is an abort and must not be mistaken for a clean quit.
+func TestExitForTreatsCancellationAsAnInterrupt(t *testing.T) {
 	if got := exitFor(context.Canceled); got != 130 {
 		t.Errorf("cancellation exits %d, want 130", got)
 	}
@@ -301,7 +275,7 @@ func TestReportDebugCarriesTheNumbersWorthReading(t *testing.T) {
 	}
 }
 
-func testPlay(out io.Writer, target *canvas.Canvas, keys <-chan key, winch <-chan os.Signal) *play {
+func testPlay(out io.Writer, target *canvas.Canvas, keys <-chan struct{}, winch <-chan os.Signal) *play {
 	return &play{
 		r:        canvas.NewRenderer(out, target.W, target.H),
 		dst:      canvas.New(target.W, target.H),
@@ -310,7 +284,6 @@ func testPlay(out io.Writer, target *canvas.Canvas, keys <-chan key, winch <-cha
 		winch:    winch,
 		keys:     keys,
 		reserved: target.H,
-		keymap:   defaultKeymap(),
 		maxRun:   maxRun,
 		samples:  make([]time.Duration, 0, 8),
 	}
@@ -350,30 +323,18 @@ func TestOnceRunsTheChainToCompletion(t *testing.T) {
 	}
 }
 
-func TestOnceStopsOnQAndOnInterrupt(t *testing.T) {
-	tests := []struct {
-		name string
-		sent key
-		want error
-	}{
-		{name: "q", sent: key('q'), want: errQuit},
-		{name: "ctrl-c", sent: keyInterrupt, want: context.Canceled},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			target := testTarget()
-			keys := make(chan key, 1)
-			keys <- tt.sent
-			p := testPlay(io.Discard, target, keys, nil)
-			defer p.ticker.Stop()
+func TestOnceStopsOnAKey(t *testing.T) {
+	target := testTarget()
+	keys := make(chan struct{}, 1)
+	keys <- struct{}{}
+	p := testPlay(io.Discard, target, keys, nil)
+	defer p.ticker.Stop()
 
-			// decrypt runs well over a second, so anything that returns quickly
-			// returned because of the key.
-			err := p.once(context.Background(), testChain(t, "decrypt", target))
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("got %v, want %v", err, tt.want)
-			}
-		})
+	// decrypt runs well over a second, so anything that returns quickly
+	// returned because of the key.
+	err := p.once(context.Background(), testChain(t, "decrypt", target))
+	if !errors.Is(err, errQuit) {
+		t.Fatalf("got %v, want errQuit", err)
 	}
 }
 
@@ -390,8 +351,8 @@ func TestOnceStopsWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
-// This is what q buys: the run ends part-way through and the reader is still
-// left looking at the whole text.
+// This is what stopping on a key buys: the run ends part-way through and the
+// reader is still left looking at the whole text.
 func TestFinishDrawsTheWholeText(t *testing.T) {
 	target := testTarget()
 	var out bytes.Buffer
@@ -464,8 +425,8 @@ func TestPauseWaitsAndStaysInterruptible(t *testing.T) {
 		t.Fatalf("pause returned after %v, want about 30ms", elapsed)
 	}
 
-	keys := make(chan key, 1)
-	keys <- key('q')
+	keys := make(chan struct{}, 1)
+	keys <- struct{}{}
 	p = testPlay(io.Discard, target, keys, nil)
 	defer p.ticker.Stop()
 	err = p.pause(context.Background(), time.Hour)
@@ -483,40 +444,30 @@ func TestPauseWaitsAndStaysInterruptible(t *testing.T) {
 	}
 }
 
-func TestReadKeysDeliversOrdinaryKeysAndNeverLosesTheAbort(t *testing.T) {
+// Any key means stop, and Ctrl-C arrives as the byte 0x03 in raw mode, so both
+// have to come out of the reader the same way.
+func TestReadKeysReportsAnyKeyIncludingCtrlC(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = r.Close() }()
 
-	keys := make(chan key, 1)
+	keys := make(chan struct{}, 1)
 	go readKeys(r, keys)
 
-	// Ctrl-C must displace whatever is queued: mashing keys and then aborting
-	// has to abort.
-	_, err = w.Write([]byte("abc\x03"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sawOrdinary := false
-	deadline := time.After(2 * time.Second)
-	for {
+	for _, press := range []byte{'a', 0x03} {
+		_, err = w.Write([]byte{press})
+		if err != nil {
+			t.Fatal(err)
+		}
 		select {
-		case got := <-keys:
-			if got != keyInterrupt {
-				sawOrdinary = true
-				continue
-			}
-			if !sawOrdinary {
-				t.Fatal("the abort arrived but no ordinary key ever did")
-			}
-			_ = w.Close()
-			return
-		case <-deadline:
-			t.Fatal("the abort never arrived")
+		case <-keys:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("press %#x never arrived", press)
 		}
 	}
+	_ = w.Close()
 }
 
 // Exit status is part of the contract: 0 is success and everything else is a
@@ -535,10 +486,8 @@ func TestRunExitCodes(t *testing.T) {
 		{name: "unknown effect", args: []string{"nosuch"}, want: 2},
 		{name: "fps out of range", args: []string{"-fps", "0", "wipe"}, want: 2},
 		{name: "negative dwell", args: []string{"-dwell", "-1s", "wipe"}, want: 2},
-		{name: "missing file", args: []string{"wipe", "/nonexistent/art.ans"}, want: 1},
-		{name: "missing show", args: []string{"/nonexistent/show.filo"}, want: 1},
 		{name: "speed out of range", args: []string{"-speed", "50", "wipe"}, want: 2},
-		{name: "show with extra args", args: []string{"show.filo", "extra"}, want: 2},
+		{name: "missing file", args: []string{"wipe", "/nonexistent/art.ans"}, want: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -597,21 +546,21 @@ func TestShowPlaysOncePerPassAndLoopsOnlyWhenAsked(t *testing.T) {
 
 	p := testPlay(io.Discard, target, nil, nil)
 	defer p.ticker.Stop()
-	if status := p.show(context.Background(), entries, opts{}); status != 0 {
+	if status := p.show(context.Background(), entries, opts{speed: 1}); status != 0 {
 		t.Fatalf("a single pass exited %d", status)
 	}
 	single := p.frames
 
-	// Looping, stopped by q after the first pass would have finished.
-	keys := make(chan key, 1)
+	// Looping, stopped by a key after the first pass would have finished.
+	keys := make(chan struct{}, 1)
 	p = testPlay(io.Discard, target, keys, nil)
 	defer p.ticker.Stop()
 	go func() {
 		time.Sleep(900 * time.Millisecond)
-		keys <- key('q')
+		keys <- struct{}{}
 	}()
-	if status := p.show(context.Background(), entries, opts{loop: true}); status != 0 {
-		t.Fatalf("q exited %d, want 0", status)
+	if status := p.show(context.Background(), entries, opts{loop: true, speed: 1}); status != 0 {
+		t.Fatalf("a key exited %d, want 0", status)
 	}
 	if p.frames <= single {
 		t.Fatalf("looping ran %d frames, a single pass ran %d; it did not loop", p.frames, single)
@@ -693,61 +642,3 @@ func (f forever) Frame(c *canvas.Canvas, t time.Duration) bool {
 	f.inner.Frame(c, t)
 	return true
 }
-
-// A key pressed on the frame an effect finishes must be acted on there, not
-// left in the channel for whatever runs next: in a show that is the next shot
-// flashing its finished text and closing on a key aimed at the one before it.
-func TestOnceActsOnAKeyPressedAsItFinishes(t *testing.T) {
-	target := testTarget()
-	tests := []struct {
-		name string
-		sent key
-		want error
-	}{
-		{name: "q", sent: key('q'), want: errQuit},
-		{name: "ctrl-c", sent: keyInterrupt, want: context.Canceled},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			keys := make(chan key, 1)
-			keys <- tt.sent
-			p := testPlay(io.Discard, target, keys, nil)
-			defer p.ticker.Stop()
-
-			// An effect that is finished on its first frame, so once returns
-			// down the !more path having never reached the select. That is the
-			// path a key pressed at the very end falls through.
-			err := p.once(context.Background(), doneEffect{})
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("got %v, want %v", err, tt.want)
-			}
-			if len(keys) != 0 {
-				t.Fatal("the key was left behind for the next run")
-			}
-		})
-	}
-}
-
-// An ordinary key is spent, not carried: it meant "get on with it", and the run
-// it was aimed at has ended.
-func TestOnceSwallowsAStaleAdvance(t *testing.T) {
-	target := testTarget()
-	keys := make(chan key, 1)
-	keys <- key('x')
-	p := testPlay(io.Discard, target, keys, nil)
-	defer p.ticker.Stop()
-
-	err := p.once(context.Background(), doneEffect{})
-	if err != nil {
-		t.Fatalf("an ordinary key ended the run: %v", err)
-	}
-	if len(keys) != 0 {
-		t.Fatal("the stale key was carried into the next run")
-	}
-}
-
-// doneEffect has nothing to animate, so once takes the path it takes on the
-// last frame of any effect: straight out, without waiting on the select.
-type doneEffect struct{}
-
-func (doneEffect) Frame(*canvas.Canvas, time.Duration) bool { return false }

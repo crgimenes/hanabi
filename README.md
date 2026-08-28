@@ -50,11 +50,12 @@ still descrambling, and takes as long as the slower of the two.
 Effects that mask, substitute or recolour compose in any order. Two effects that
 both move characters will fight over the same cells; the last one wins.
 
-`-loop` replays until interrupted -- the idle screen the project was written for,
-something to leave running on a shared terminal. It runs straight through by
-default; `-dwell` holds the finished text between passes when you want a pause.
-Press **q** to jump straight to the finished text and exit; Ctrl-C aborts where
-it is.
+`-loop` replays until a key is pressed -- the idle screen the project was
+written for, something to leave running on a shared terminal. It runs straight
+through by default; `-dwell` holds the finished text between passes when you
+want a pause, and `-speed` runs the whole animation faster or slower.
+Press **any key** to jump straight to the finished text and exit; Ctrl-C counts
+as a key.
 
 ## ANSI art
 
@@ -180,99 +181,12 @@ playing alone for most of the run. Pair effects of similar length.
 
 `typing` runs at human speed -- around 160ms a character, mistakes and all -- so
 it suits a line or a short paragraph. A thousand characters take over two
-minutes, and a run that reaches the five-minute ceiling stops the way `q` does,
-with the whole text on screen.
-
-## Shows
-
-An argument ending in `.filo` is a show script: a small
-[Filo](https://github.com/crgimenes/filo) program that records a sequence of
-steps, which then play in order. The script never runs the animation itself --
-it builds the playlist under tight limits and finishes in milliseconds, so the
-same script always produces the same show.
-
-```lisp
-(shot "slide,decrypt" "hanabi\na show, scripted in filo")
-(pause 1)
-(map (fn (i) (shot "wipe" "tick")) (range 2))
-(wait-key)
-(clear)
-(shot "fireworks,burn" (file "finale.txt"))
-```
-
-`(shot "effects" text)` plays a chain over a text, an optional third argument
-setting its pace (`0.6` runs it at six tenths speed); `(file "path")` reads a file,
-resolved against the script's own directory; `(pause seconds)` holds; `(wait-key)`
-waits for the reader; `(clear)` wipes the screen, which otherwise scrolls on down
-the terminal. Loops belong to the language: repeating is `(map ... (range n))`.
-
-### Keys belong to the script
-
-`q` stops an animation because that is the default binding, not because the
-program insists on it. A show can move it, or let it go:
-
-```lisp
-(set-key "q" (none))          ; pressing it by accident now costs nothing
-(set-key "1" (goto "intro"))  ; (label "intro") names the place
-(set-key "n" (next))          ; skip whatever is on screen
-(set-key "x" (goto "the end")); a label with nothing after it ends the show
-```
-
-That is enough for menus: bind the digits to `(goto ...)`, put a `(label)` before
-each section, and `(wait-key)` at the end of them. See
-[examples/menu.filo](examples/menu.filo).
-
-There is no word for "end the show": a show ends when it runs out of steps, so a
-key that leaves jumps to a label with nothing recorded after it. Filo's own
-`(exit)` is a different thing -- it ends the *script* where it stands, so
-everything recorded above it is the show. That is how a show is written
-conditionally.
-
-```lisp
-(shot "wipe" "always")
-(if short-version (exit) 0)
-(shot "typing" "only in the long version")
-```
-
-**Ctrl-C is not bindable.** Whatever a script does with the rest of the keyboard,
-the reader keeps a way out.
-
-An action can also be a function, and then the decision is made when the key is
-pressed rather than when the script is read. That is what lets a menu remember:
-
-```lisp
-(def seen (list))
-(def wander (fn ()
-  (cond
-    ((not (already? "one")) (visit "one"))
-    (else (goto "done")))))
-(set-key "n" wander)
-```
-
-A handler runs only on a press -- never per frame -- and under the same limits
-as the script, so a two-hour show still asks the evaluator for nothing between
-keys. It sees the globals the script left behind, and `(set ...)` inside it is
-remembered for the next press. `(jump "label")` is the show moving on its own,
-where `(goto "label")` is what a key does.
-
-**A shot's text is fixed when the script runs.** A handler decides where the show
-goes, not what an already recorded screen says: `(str-fmt "seen %v" (length seen))`
-in a shot reports what `seen` held while the playlist was being built.
-
-Filo is a whole language, not a configuration format: `def`, `cond`, `let`,
-closures, `filter`/`fold`/`map` are all there, and `str-*` and the maths builtins
-are registered for shows. `rand-*` and `print` deliberately are not -- one would
-stop a show replaying from its seed, the other would write into the middle of the
-animation. See [examples/menu2.filo](examples/menu2.filo). The [examples](examples/) directory holds three shows
-and a handful of small art files to run them on; `hanabi examples/hanabi.filo`
-is the tour.
+minutes, and a run that reaches the five-minute ceiling stops the way a key
+does, with the whole text on screen.
 
 ## Dependencies
 
-`golang.org/x/term` for the terminal, and
-[`github.com/crgimenes/filo`](https://github.com/crgimenes/filo) for show
-scripts -- itself pure Go with the same single dependency. That is the whole
-list.
+`golang.org/x/term` for the terminal. That is the whole list.
 
 ## License
 
