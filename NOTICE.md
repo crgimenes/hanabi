@@ -33,3 +33,12 @@ direct port of its code will say so in its own header, and the effect will be
 listed below.
 
 Ported code: none.
+
+## Art
+
+`examples/art/bacchikoi.txt` is バッチコイ -- "bring it on!" -- drawn in
+braille by the author. The other pieces under `examples/` are folk miniatures,
+the author's own doodles, and small pieces picked up wandering the BBSs of
+old, whose authors are unknown at the moment; nothing is taken from a licensed
+collection. If one of them is yours, open an issue and it will be credited or
+replaced.

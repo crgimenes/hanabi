@@ -184,6 +184,24 @@ it suits a line or a short paragraph. A thousand characters take over two
 minutes, and a run that reaches the five-minute ceiling stops the way a key
 does, with the whole text on screen.
 
+## Examples
+
+Because any key skips the animation on screen and the finished text stays put,
+a presentation or a menu is nothing more than a shell script that calls hanabi
+once per screen and reads one key between them:
+
+```console
+$ examples/tour.sh    # a slide deck over the bundled art
+$ examples/bbs.sh     # a make-believe BBS: dial-up, menu, door games, NO CARRIER
+```
+
+Both are plain bash -- `read -rsn1` is the whole event loop. The
+[examples/art](examples/art/) directory holds the small pieces they animate.
+
+With [slow](https://github.com/crgimenes/slow) installed, the BBS paces its
+handshake and message screens at the bits per second of the modem it pretends
+to be; without it those screens simply appear at once.
+
 ## Dependencies
 
 `golang.org/x/term` for the terminal. That is the whole list.
