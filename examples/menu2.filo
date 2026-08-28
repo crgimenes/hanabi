@@ -47,7 +47,7 @@
 (set-key "q"
   (none))
 (set-key "x"
-  (quit))
+  (goto "the end"))
 (set-key "1"
   (fn
     ()
@@ -87,3 +87,5 @@
 (shot "fireworks" "that is all of them\n\npress x to leave")
 (wait-key)
 (jump "menu")
+
+(label "the end")

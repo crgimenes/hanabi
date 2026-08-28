@@ -213,18 +213,20 @@ program insists on it. A show can move it, or let it go:
 
 ```lisp
 (set-key "q" (none))          ; pressing it by accident now costs nothing
-(set-key "x" (quit))
 (set-key "1" (goto "intro"))  ; (label "intro") names the place
 (set-key "n" (next))          ; skip whatever is on screen
+(set-key "x" (goto "the end")); a label with nothing after it ends the show
 ```
 
 That is enough for menus: bind the digits to `(goto ...)`, put a `(label)` before
 each section, and `(wait-key)` at the end of them. See
 [examples/menu.filo](examples/menu.filo).
 
-`(quit)` is the action a key can hold. Filo's own `(exit)` is a different thing
-and still available: it ends the script where it stands, so everything recorded
-above it is the show. That is how a show is written conditionally.
+There is no word for "end the show": a show ends when it runs out of steps, so a
+key that leaves jumps to a label with nothing recorded after it. Filo's own
+`(exit)` is a different thing -- it ends the *script* where it stands, so
+everything recorded above it is the show. That is how a show is written
+conditionally.
 
 ```lisp
 (shot "wipe" "always")

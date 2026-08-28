@@ -50,16 +50,17 @@ than one effect layers them: they run together, on the same frames.
 An argument ending in .filo is a show script: a Filo program that records a
 sequence of steps, played in order. Its builtins are (shot "effects" text
 [speed]), (file "path"), (pause seconds), (wait-key), (clear), (label "name")
-and (set-key "k" action), the actions being (quit), (next), (goto "label") and
-(none). Paths resolve against the script's own directory.
+(jump "label") and (set-key "k" action), the actions being (next), (goto
+"label") and (none). Paths resolve against the script's own directory.
 
 In a show the script owns the keyboard: q stops the animation only because that
 is the default binding, and (set-key "q" (none)) releases it. Ctrl-C aborts
 whatever is bound and cannot be taken. An unbound key advances a (wait-key) and
 is ignored elsewhere.
 
-Filo's own (exit) still ends the script where it stands, which is how a show is
-written conditionally; (quit) is the action a key binding holds.
+Filo's own (exit) ends the script where it stands, which is how a show is
+written conditionally. A key that leaves the show jumps to a label with nothing
+recorded after it.
 
 Press q to jump to the finished text and exit; Ctrl-C aborts where it is.
 

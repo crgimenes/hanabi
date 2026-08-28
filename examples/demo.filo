@@ -1,6 +1,7 @@
 ; A hanabi show: each builtin records a step, and the steps play in order.
 ;   hanabi examples/demo.filo
-; During (wait-key) any key advances; q quits, Ctrl-C aborts.
+; During (wait-key) any key advances; q stops the animation by default, and
+; Ctrl-C always aborts.
 
 (shot "slide,decrypt" "hanabi\na show, scripted in filo")
 (pause 1)

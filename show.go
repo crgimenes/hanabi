@@ -133,7 +133,7 @@ func (h *handlers) call(k key) (action, error) {
 	a, ok := asAction(result)
 	if !ok {
 		return action{}, fmt.Errorf(
-			"the handler for %q returned %v; it must return (quit), (next), (none) or (goto \"label\")",
+			"the handler for %q returned %v; it must return (next), (none) or (goto \"label\")",
 			string(rune(k)), result)
 	}
 	return a, nil
@@ -174,9 +174,6 @@ func parseShow(src, dir string) (*show, error) {
 		eng.RegisterBuiltin("clear", markerBuiltin("clear", stepClear, record)),
 		eng.RegisterBuiltin("label", labelBuiltin(record)),
 		eng.RegisterBuiltin("jump", jumpBuiltin(record)),
-		// Not "exit": that is one of Filo's own special forms, and the evaluator
-		// takes it before a builtin of that name is ever consulted.
-		eng.RegisterBuiltin("quit", actionBuiltin("quit", actExit)),
 		eng.RegisterBuiltin("next", actionBuiltin("next", actNext)),
 		eng.RegisterBuiltin("none", actionBuiltin("none", actAdvance)),
 		eng.RegisterBuiltin("goto", gotoBuiltin()),
@@ -229,7 +226,7 @@ func explainExit(err error) error {
 		return err
 	}
 	return fmt.Errorf("%w\n(exit) is Filo's own, and ends the script where it stands. "+
-		"To bind a key, the action is (quit)", err)
+		"A key that leaves is (goto \"label\") with nothing recorded after that label", err)
 }
 
 func findLabel(steps []showStep, name string) int {
@@ -300,7 +297,7 @@ func gotoBuiltin() filo.Builtin {
 func setKeyBuiltin(keys keymap, fns map[key]filo.Value) filo.Builtin {
 	return func(_ context.Context, args []filo.Value) (filo.Value, error) {
 		if len(args) != 2 {
-			return filo.VBool(false), errors.New(`set-key: want (set-key "k" (quit))`)
+			return filo.VBool(false), errors.New(`set-key: want (set-key "k" (goto "label"))`)
 		}
 		s, err := args[0].AsString()
 		if err != nil {
@@ -323,7 +320,7 @@ func setKeyBuiltin(keys keymap, fns map[key]filo.Value) filo.Builtin {
 		a, ok := asAction(args[1])
 		if !ok {
 			return filo.VBool(false), errors.New(
-				`set-key: the second argument must be (quit), (next), (none), (goto "label") or a function returning one`)
+				`set-key: the second argument must be (next), (none), (goto "label") or a function returning one`)
 		}
 		delete(fns, k)
 		if a.kind == actAdvance {

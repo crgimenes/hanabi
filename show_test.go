@@ -382,12 +382,15 @@ func TestSetKeyRebindsAndUnbinds(t *testing.T) {
 	}
 
 	// Moved somewhere else.
-	m := keymapOf(t, `(set-key "q" (none)) (set-key "x" (quit))`)
+	// Leaving is a jump to a label with nothing after it, so the show simply
+	// runs out of steps. There is no separate word for ending.
+	m := keymapOf(t, `(label "the end") (set-key "q" (none)) (set-key "x" (goto "the end"))`)
 	if m.stopErr('q') != nil {
 		t.Fatal("q was not released")
 	}
-	if !errors.Is(m.stopErr('x'), errQuit) {
-		t.Fatal("x was not given the job")
+	var jump jumpError
+	if !errors.As(m.stopErr('x'), &jump) || jump.to.label != "the end" {
+		t.Fatalf("x does not leave: %+v", jump)
 	}
 }
 
@@ -408,7 +411,7 @@ func TestSetKeyRefusesNonsense(t *testing.T) {
 		src  string
 		want string
 	}{
-		{name: "two keys", src: `(set-key "qq" (quit))`, want: "single key"},
+		{name: "two keys", src: `(set-key "qq" (next))`, want: "single key"},
 		{name: "not an action", src: `(set-key "q" "exit")`, want: "second argument"},
 		{name: "arity", src: `(set-key "q")`, want: "set-key"},
 		{name: "goto nowhere", src: `(set-key "m" (goto "absent"))`, want: "no (label) names"},
@@ -477,14 +480,14 @@ func TestFiloExitEndsTheScriptAndKeepsWhatWasRecorded(t *testing.T) {
 	}
 }
 
-// (exit) and (quit) sit next to each other in the vocabulary and mean different
-// things, so reaching for the wrong one has to say which is which.
-func TestExitAsAnActionPointsAtQuit(t *testing.T) {
+// (exit) is the only word for stopping, and it stops the script rather than the
+// show. Reaching for it in a binding has to say what to reach for instead.
+func TestExitAsAnActionExplainsItself(t *testing.T) {
 	_, err := parseShow(`(set-key "q" (exit)) (shot "wipe" "x")`, t.TempDir())
 	if err == nil {
 		t.Fatal("(exit) was accepted as an action")
 	}
-	for _, want := range []string{"Filo's own", "(quit)"} {
+	for _, want := range []string{"Filo's own", `(goto "label")`} {
 		if strings.Contains(err.Error(), want) {
 			continue
 		}
@@ -500,7 +503,8 @@ func TestHandlerFunctionDecidesAtPressTime(t *testing.T) {
 		(set visits 0)
 		(set-key "n" (fn ()
 			(set visits (+ visits 1))
-			(if (< visits 2) (goto "a") (quit))))
+			(if (< visits 2) (goto "a") (goto "over"))))
+		(label "over")
 	`)
 
 	first, err := sh.hand.call('n')
@@ -515,8 +519,8 @@ func TestHandlerFunctionDecidesAtPressTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.kind != actExit {
-		t.Fatalf("second press gave %+v, want a quit; the handler forgot the first", second)
+	if second.kind != actGoto || second.label != "over" {
+		t.Fatalf("second press gave %+v, want the way out; the handler forgot the first", second)
 	}
 }
 
@@ -561,7 +565,7 @@ func TestHandlerMustReturnAnAction(t *testing.T) {
 // Binding a function and then binding a plain action to the same key has to
 // forget the function, or the stale one would answer for the new binding.
 func TestRebindingOverAFunctionForgetsIt(t *testing.T) {
-	sh := showOf(t, `(set-key "k" (fn () (quit))) (set-key "k" (next))`)
+	sh := showOf(t, `(set-key "k" (fn () (next))) (set-key "k" (next))`)
 	if sh.keys['k'].kind != actNext {
 		t.Fatalf("the key is %+v, want a plain next", sh.keys['k'])
 	}

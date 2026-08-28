@@ -4,11 +4,14 @@
 ; q does nothing here -- the show releases it on purpose, so pressing it by
 ; accident during a presentation costs nothing. Ctrl-C always aborts; no script
 ; can take that away.
+;
+; Leaving is a jump to a label with nothing after it: the show runs out of steps
+; and ends, which is all that ending ever was.
 
 (set-key "q"
   (none))
 (set-key "x"
-  (quit))
+  (goto "the end"))
 (set-key "1"
   (goto "one"))
 (set-key "2"
@@ -38,3 +41,5 @@
 (shot "wipe" "press x to leave, 0 for the menu")
 (wait-key)
 (goto "menu")
+
+(label "the end")
