@@ -38,4 +38,3 @@
 (shot "wipe" "press x to leave, 0 for the menu")
 (wait-key)
 (goto "menu")
-

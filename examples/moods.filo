@@ -12,4 +12,3 @@
 (wait-key)
 (shot "scattered"
   (file "art/bunny.txt"))
-

@@ -16,4 +16,3 @@
 (clear)
 (shot "fireworks,burn"
   (file "finale.txt"))
-

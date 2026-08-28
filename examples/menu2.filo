@@ -87,4 +87,3 @@
 (shot "fireworks" "that is all of them\n\npress x to leave")
 (wait-key)
 (jump "menu")
-

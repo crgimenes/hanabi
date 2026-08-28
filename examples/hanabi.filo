@@ -30,4 +30,3 @@
 (pause 0.8)
 (shot "doomfire"
   (file "art/bacchikoi.txt"))
-
